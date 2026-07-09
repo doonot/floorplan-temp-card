@@ -69,7 +69,8 @@
   <label class="hint">Bild <input type="file" id="bgfile" accept="image/*" style="width:170px"></label>
   <label class="hint">Deckkraft <input type="range" id="bgop" min="0" max="100" value="40" style="width:80px;vertical-align:middle"></label>
   <button class="act" id="saveProj">Projekt ↓</button>
-  <label class="act" style="cursor:pointer">Projekt ↑<input type="file" id="loadProj" accept=".json" hidden></label>
+  <button class="act" id="loadProjBtn">Projekt ↑</button>
+  <input type="file" id="loadProj" accept=".json,application/json" style="display:none">
   <button class="act primary" id="exportBtn">YAML exportieren</button>
 </header>
 <main>
@@ -416,14 +417,37 @@ document.getElementById('saveProj').onclick = () => {
   a.download = 'grundriss-projekt.json';
   a.click();
 };
-document.getElementById('loadProj').addEventListener('change', (ev) => {
-  const file = ev.target.files[0]; if (!file) return;
+document.getElementById('loadProjBtn').onclick = () => document.getElementById('loadProj').click();
+function importProject(file) {
   const rd = new FileReader();
   rd.onload = () => {
-    try { project = JSON.parse(rd.result); selId = null; persist(); render(); }
-    catch (e) { alert('Ungültige Projektdatei: ' + e.message); }
+    try {
+      const p = JSON.parse(rd.result);
+      if (!Array.isArray(p.floors)) throw new Error('keine "floors"-Liste gefunden');
+      project = p; project.active = project.active || 0; selId = null;
+      persist(); render();
+    } catch (e) { alert('Ungültige Projektdatei: ' + e.message); }
   };
   rd.readAsText(file);
+}
+document.getElementById('loadProj').addEventListener('change', (ev) => {
+  const file = ev.target.files[0];
+  if (file) importProject(file);
+  ev.target.value = '';
+});
+// Bonus: Projekt-JSON oder Referenzbild einfach auf die Seite ziehen
+window.addEventListener('dragover', (ev) => ev.preventDefault());
+window.addEventListener('drop', (ev) => {
+  ev.preventDefault();
+  const file = ev.dataTransfer.files && ev.dataTransfer.files[0];
+  if (!file) return;
+  if (file.type.startsWith('image/')) {
+    const rd = new FileReader();
+    rd.onload = () => { bgImages[floor().key] = rd.result; render(); };
+    rd.readAsDataURL(file);
+  } else {
+    importProject(file);
+  }
 });
 
 // ---------- YAML export ----------
