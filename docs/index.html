@@ -58,7 +58,7 @@
 </head>
 <body>
 <header>
-  <h1>🏠 Grundriss-Editor <small style="font-size:11px;font-weight:400;opacity:.55">v0.3.1</small></h1>
+  <h1>🏠 Grundriss-Editor <small style="font-size:11px;font-weight:400;opacity:.55">v0.3.2</small></h1>
   <div class="tabs" id="tabs"></div>
   <div class="tools">
     <button class="tool on" data-tool="select" title="Auswählen/Verschieben (V)">✥ Auswahl</button>
@@ -66,10 +66,11 @@
     <button class="tool" data-tool="poly" title="Polygon klicken, Enter schließt (P)">⬠ Polygon</button>
   </div>
   <div class="sp"></div>
-  <label class="hint">Bild <input type="file" id="bgfile" accept="image/*" style="width:170px"></label>
+  <button class="act" id="bgfileBtn" title="Grundriss-Plan (Foto/Scan) als Zeichenvorlage hinterlegen — bleibt lokal">🖼 Plan-Bild laden…</button>
+  <input type="file" id="bgfile" accept="image/*" style="display:none">
   <label class="hint">Deckkraft <input type="range" id="bgop" min="0" max="100" value="40" style="width:80px;vertical-align:middle"></label>
-  <button class="act" id="saveProj">Projekt ↓</button>
-  <button class="act" id="loadProjBtn">Projekt ↑</button>
+  <button class="act" id="saveProj" title="Projekt als JSON-Datei herunterladen">💾 Projekt speichern</button>
+  <button class="act" id="loadProjBtn" title="Gespeicherte Projekt-JSON laden (oder Datei einfach hierher ziehen)">📂 Projekt laden…</button>
   <input type="file" id="loadProj" accept=".json,application/json" style="display:none">
   <button class="act primary" id="exportBtn">YAML exportieren</button>
 </header>
@@ -94,7 +95,7 @@
       <button class="act" id="pDelete" style="color:#c22">Raum löschen</button>
     </div>
     <h2>Hilfe</h2>
-    <div class="hint">1. Architektenplan als Bild laden (bleibt lokal, wird nie exportiert).<br>
+    <div class="hint">1. „🖼 Plan-Bild laden…": Architektenplan als Zeichenvorlage laden (bleibt lokal, wird nie exportiert). Bild oder Projekt-JSON kann auch per Drag &amp; Drop aufs Fenster gezogen werden.<br>
       2. Mit ▭ Räume über die Zimmer ziehen (Raster 5 px).<br>
       3. Raum anklicken → Name + Sensor-Entity zuweisen.<br>
       4. „YAML exportieren" → Config in HA einfügen (<code>custom:floorplan-temp-card</code>).<br>
@@ -401,6 +402,7 @@ document.getElementById('pDelete').onclick = () => selId && deleteRoom(selId);
 document.getElementById('cw').addEventListener('change', (ev) => { floor().canvas[0] = +ev.target.value || 100; persist(); render(); });
 document.getElementById('ch').addEventListener('change', (ev) => { floor().canvas[1] = +ev.target.value || 100; persist(); render(); });
 
+document.getElementById('bgfileBtn').onclick = () => document.getElementById('bgfile').click();
 document.getElementById('bgfile').addEventListener('change', (ev) => {
   const file = ev.target.files[0]; if (!file) return;
   const rd = new FileReader();
