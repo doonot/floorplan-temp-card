@@ -5,7 +5,7 @@
  * No dependencies, no build step. MIT.
  */
 
-const VERSION = '0.5.1';
+const VERSION = '0.5.2';
 
 // Live badge next to the room name when the entity is a real sensor (domain
 // "sensor"): a dot with two radio waves that pulse outward in sequence.
@@ -288,12 +288,21 @@ class FloorplanTempCard extends HTMLElement {
       .live-icon .w2 { animation-delay: 0.4s; }
       .live-icon.off { color: var(--secondary-text-color, #9aa7b4); }
       .live-icon.off .w1, .live-icon.off .w2 { animation: none; opacity: 0.45; }
+      /* live sensor: value in green, breathing gently in sync with the waves */
+      .room-value.live {
+        fill: hsl(158, 55%, 32%) !important;
+        animation: fp-livepulse 2.4s ease-in-out infinite;
+      }
       @keyframes fp-livewave {
         0%, 70%, 100% { opacity: 0.25; }
         20%, 45% { opacity: 1; }
       }
+      @keyframes fp-livepulse {
+        0%, 100% { opacity: 1; }
+        45% { opacity: 0.62; }
+      }
       @media (prefers-reduced-motion: reduce) {
-        .live-icon .w1, .live-icon .w2 { animation: none; }
+        .live-icon .w1, .live-icon .w2, .room-value.live { animation: none; }
       }
     `;
     this.shadowRoot.appendChild(style);
@@ -418,16 +427,18 @@ class FloorplanTempCard extends HTMLElement {
         // grey + static while the sensor is unavailable
         liveIcon.classList.toggle('off', !Number.isFinite(temp));
       }
+      const isLive = room.entity.split('.')[0] === 'sensor';
       if (Number.isFinite(temp)) {
         const sh = this._shadesFor(temp);
         shape.setAttribute('fill', sh.fill);
         if (valueText) {
           valueText.textContent = this._fmt(temp) + this._config.unit;
           valueText.style.fill = sh.text; // inline style wins over the class fill
+          valueText.classList.toggle('live', isLive); // .live (!important) wins over both
         }
       } else {
         shape.setAttribute('fill', 'var(--secondary-background-color, #eef1f4)');
-        if (valueText) { valueText.textContent = '–'; valueText.style.fill = ''; }
+        if (valueText) { valueText.textContent = '–'; valueText.style.fill = ''; valueText.classList.remove('live'); }
       }
       if (deltaText) {
         const d = this._deltas.get(room.entity);
