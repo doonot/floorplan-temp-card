@@ -5,11 +5,21 @@
  * No dependencies, no build step. MIT.
  */
 
-const VERSION = '0.5.0';
+const VERSION = '0.5.1';
 
-// mdi:wifi — shown next to the room name when the entity is a real sensor
-// (domain "sensor"), marking live/realtime data vs. placeholder helpers.
-const WIFI_PATH = 'M12,21L15.6,16.2C14.6,15.45 13.35,15 12,15C10.65,15 9.4,15.45 8.4,16.2L12,21M12,3C7.95,3 4.21,4.34 1.2,6.6L3,9C5.5,7.12 8.62,6 12,6C15.38,6 18.5,7.12 21,9L22.8,6.6C19.79,4.34 16.05,3 12,3M12,9C9.3,9 6.81,9.89 4.8,11.4L6.6,13.8C8.1,12.67 9.97,12 12,12C14.03,12 15.9,12.67 17.4,13.8L19.2,11.4C17.19,9.89 14.7,9 12,9Z';
+// Live badge next to the room name when the entity is a real sensor (domain
+// "sensor"): a dot with two radio waves that pulse outward in sequence.
+// Built from primitives (24×24 box) so each wave can animate on its own.
+function liveIconEl() {
+  const g = svgEl('g', { class: 'live-icon' });
+  const tip = svgEl('title');
+  tip.textContent = 'Echter Sensor – Live-Daten';
+  g.appendChild(tip);
+  g.appendChild(svgEl('circle', { cx: 12, cy: 18.2, r: 2, class: 'dot' }));
+  g.appendChild(svgEl('path', { d: 'M8.6,14.6 a5,5 0 0 1 6.8,0', class: 'w1' }));
+  g.appendChild(svgEl('path', { d: 'M5.6,11.4 a9.3,9.3 0 0 1 12.8,0', class: 'w2' }));
+  return g;
+}
 
 const DEFAULT_THRESHOLDS = [
   { below: 19, color: '#4a90d9' },   // kühl – ruhiges Blau
@@ -269,7 +279,22 @@ class FloorplanTempCard extends HTMLElement {
       .room-value { font-size: ${fsValue}px; font-weight: 800; }
       .delta { font-size: ${fsName * 0.95}px; font-weight: 400; }
       .delta-up { fill: #e25c4a; } .delta-down { fill: #4a90d9; }
-      .live-icon { fill: #2f7fd6; opacity: 0.9; pointer-events: none; }
+      .live-icon { color: #2f7fd6; pointer-events: none; }
+      .live-icon .dot { fill: currentColor; }
+      .live-icon .w1, .live-icon .w2 {
+        fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round;
+        animation: fp-livewave 2.4s ease-in-out infinite;
+      }
+      .live-icon .w2 { animation-delay: 0.4s; }
+      .live-icon.off { color: var(--secondary-text-color, #9aa7b4); }
+      .live-icon.off .w1, .live-icon.off .w2 { animation: none; opacity: 0.45; }
+      @keyframes fp-livewave {
+        0%, 70%, 100% { opacity: 0.25; }
+        20%, 45% { opacity: 1; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .live-icon .w1, .live-icon .w2 { animation: none; }
+      }
     `;
     this.shadowRoot.appendChild(style);
 
@@ -319,10 +344,7 @@ class FloorplanTempCard extends HTMLElement {
         nameText.textContent = room.name;
         g.appendChild(nameText);
         if (room.entity && room.entity.split('.')[0] === 'sensor') {
-          liveIcon = svgEl('path', { d: WIFI_PATH, class: 'live-icon' });
-          const tip = svgEl('title');
-          tip.textContent = 'Echter Sensor – Live-Daten';
-          liveIcon.appendChild(tip);
+          liveIcon = liveIconEl();
           g.appendChild(liveIcon);
           // Position right of the name once the text is laid out; fall back to
           // an estimated width if the card isn't in the DOM yet.
@@ -393,8 +415,8 @@ class FloorplanTempCard extends HTMLElement {
       const st = this._hass.states[room.entity];
       const temp = st ? parseFloat(st.state) : NaN;
       if (liveIcon) {
-        // grey out the live badge while the sensor is unavailable
-        liveIcon.style.fill = Number.isFinite(temp) ? '' : 'var(--secondary-text-color, #9aa7b4)';
+        // grey + static while the sensor is unavailable
+        liveIcon.classList.toggle('off', !Number.isFinite(temp));
       }
       if (Number.isFinite(temp)) {
         const sh = this._shadesFor(temp);
