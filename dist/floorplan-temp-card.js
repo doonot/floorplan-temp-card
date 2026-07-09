@@ -5,7 +5,7 @@
  * No dependencies, no build step. MIT.
  */
 
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 
 const DEFAULT_THRESHOLDS = [
   { below: 19, color: '#4a90d9' },   // kühl – ruhiges Blau
@@ -62,6 +62,86 @@ function shades([h, s]) {
   };
 }
 
+// Union of axis-aligned rects → closed boundary loops (rectilinear polygons).
+// Grid decomposition over all rect edges, then boundary tracing with the
+// interior kept on the left; at pinch points prefer the sharpest left turn so
+// loops don't cross. Holes come out as separate loops (evenodd handles them).
+function rectUnionLoops(rects) {
+  const xs = [...new Set(rects.flatMap((r) => [r[0], r[0] + r[2]]))].sort((a, b) => a - b);
+  const ys = [...new Set(rects.flatMap((r) => [r[1], r[1] + r[3]]))].sort((a, b) => a - b);
+  const nx = xs.length - 1, ny = ys.length - 1;
+  const cov = Array.from({ length: nx }, (_, i) => Array.from({ length: ny }, (_, j) => {
+    const cx = (xs[i] + xs[i + 1]) / 2, cy = (ys[j] + ys[j + 1]) / 2;
+    return rects.some((r) => cx > r[0] && cx < r[0] + r[2] && cy > r[1] && cy < r[1] + r[3]);
+  }));
+  const at = (i, j) => i >= 0 && j >= 0 && i < nx && j < ny && cov[i][j];
+  const out = new Map();
+  const add = (x1, y1, x2, y2) => {
+    const k = x1 + ',' + y1;
+    if (!out.has(k)) out.set(k, []);
+    out.get(k).push([x2, y2]);
+  };
+  for (let i = 0; i < nx; i++) for (let j = 0; j < ny; j++) {
+    if (!cov[i][j]) continue;
+    if (!at(i, j - 1)) add(xs[i], ys[j], xs[i + 1], ys[j]);
+    if (!at(i, j + 1)) add(xs[i + 1], ys[j + 1], xs[i], ys[j + 1]);
+    if (!at(i - 1, j)) add(xs[i], ys[j + 1], xs[i], ys[j]);
+    if (!at(i + 1, j)) add(xs[i + 1], ys[j], xs[i + 1], ys[j + 1]);
+  }
+  const loops = [];
+  while (out.size) {
+    let cur = out.keys().next().value.split(',').map(Number);
+    let dir = null;
+    const loop = [];
+    for (;;) {
+      const k = cur[0] + ',' + cur[1];
+      const cands = out.get(k);
+      if (!cands || !cands.length) break;
+      let pick = 0;
+      if (dir && cands.length > 1) {
+        const score = ([px, py]) => {
+          const nd = [Math.sign(px - cur[0]), Math.sign(py - cur[1])];
+          const cross = dir[0] * nd[1] - dir[1] * nd[0];
+          return cross > 0 ? 0 : cross === 0 ? 1 : 2;
+        };
+        pick = cands.map((c, i) => [score(c), i]).sort((a, b) => a[0] - b[0])[0][1];
+      }
+      const next = cands.splice(pick, 1)[0];
+      if (!cands.length) out.delete(k);
+      loop.push(cur);
+      dir = [Math.sign(next[0] - cur[0]), Math.sign(next[1] - cur[1])];
+      cur = next;
+      if (cur[0] === loop[0][0] && cur[1] === loop[0][1]) break;
+    }
+    const simp = loop.filter((p, i) => {
+      const a = loop[(i - 1 + loop.length) % loop.length], b = loop[(i + 1) % loop.length];
+      return (a[0] - p[0]) * (b[1] - p[1]) - (a[1] - p[1]) * (b[0] - p[0]) !== 0;
+    });
+    if (simp.length >= 3) loops.push(simp);
+  }
+  return loops;
+}
+
+function roomLoops(room) {
+  if (Array.isArray(room.rects)) return rectUnionLoops(room.rects);
+  if (room.polygon) return [room.polygon];
+  const [x, y, w, h] = room.rect;
+  return [[[x, y], [x + w, y], [x + w, y + h], [x, y + h]]];
+}
+
+function loopsToPath(loops) {
+  return loops.map((pts) => 'M' + pts.map((p) => p.join(' ')).join(' L') + ' Z').join(' ');
+}
+
+function loopArea(pts) {
+  let a = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const [x1, y1] = pts[i], [x2, y2] = pts[(i + 1) % pts.length];
+    a += x1 * y2 - x2 * y1;
+  }
+  return Math.abs(a / 2);
+}
+
 function centroid(points) {
   // Area-weighted polygon centroid (falls back to vertex average for degenerate shapes).
   let area = 0, cx = 0, cy = 0;
@@ -96,8 +176,10 @@ class FloorplanTempCard extends HTMLElement {
       if (!r.id) throw new Error('floorplan-temp-card: every room needs an "id"');
       const hasRect = Array.isArray(r.rect) && r.rect.length === 4;
       const hasPoly = Array.isArray(r.polygon) && r.polygon.length >= 3;
-      if (!hasRect && !hasPoly) {
-        throw new Error(`floorplan-temp-card: room "${r.id}" needs rect:[x,y,w,h] or polygon:[[x,y],...]`);
+      const hasRects = Array.isArray(r.rects) && r.rects.length >= 1
+        && r.rects.every((x) => Array.isArray(x) && x.length === 4);
+      if (!hasRect && !hasPoly && !hasRects) {
+        throw new Error(`floorplan-temp-card: room "${r.id}" needs rect:[x,y,w,h], rects:[[x,y,w,h],...] or polygon:[[x,y],...]`);
       }
     }
     const mode = config.color_mode || 'thresholds';
@@ -199,15 +281,11 @@ class FloorplanTempCard extends HTMLElement {
 
     for (const room of c.rooms) {
       const g = svgEl('g');
-      let shape;
-      const points = room.polygon || [
-        [room.rect[0], room.rect[1]],
-        [room.rect[0] + room.rect[2], room.rect[1]],
-        [room.rect[0] + room.rect[2], room.rect[1] + room.rect[3]],
-        [room.rect[0], room.rect[1] + room.rect[3]],
-      ];
-      const ptStr = points.map((p) => p.join(',')).join(' ');
-      shape = svgEl('polygon', { points: ptStr });
+      const loops = roomLoops(room);
+      // Label anchor: centroid of the largest boundary loop (multi-rect rooms
+      // may trace holes/islands as extra loops).
+      const points = loops.reduce((a, b) => (loopArea(b) > loopArea(a) ? b : a), loops[0]);
+      const shape = svgEl('path', { d: loopsToPath(loops), 'fill-rule': 'evenodd' });
       if (room.outline) {
         shape.setAttribute('class', 'outline');
       } else {
@@ -217,7 +295,16 @@ class FloorplanTempCard extends HTMLElement {
       }
       g.appendChild(shape);
 
-      const [lx, ly] = room.label || centroid(points);
+      // Multi-rect rooms: default label into the "roomiest" sub-rect (largest
+      // short side, then area) — the loop centroid of an L/U shape can sit at
+      // the concave corner, and the largest-by-area part may be a narrow strip.
+      const roomier = (a, b) => {
+        const ma = Math.min(a[2], a[3]), mb = Math.min(b[2], b[3]);
+        return mb > ma || (mb === ma && b[2] * b[3] > a[2] * a[3]) ? b : a;
+      };
+      const biggest = Array.isArray(room.rects) ? room.rects.reduce(roomier) : null;
+      const [lx, ly] = room.label
+        || (biggest ? [biggest[0] + biggest[2] / 2, biggest[1] + biggest[3] / 2] : centroid(points));
       let valueText = null, deltaText = null;
       const showLabel = room.show_label !== false;
       if (showLabel && room.name) {

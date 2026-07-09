@@ -53,12 +53,13 @@
   .vhandle{fill:#fff;stroke:var(--sel);stroke-width:2;cursor:grab}
   .lhandle{fill:var(--sel);opacity:.85;cursor:grab}
   .draft{fill:rgba(23,184,144,.15);stroke:var(--accent);stroke-width:2;stroke-dasharray:5 4}
+  .subdiv{fill:none;stroke:var(--sel);stroke-width:1;stroke-dasharray:3 3;opacity:.5;pointer-events:none}
   #bgimg{pointer-events:none}
 </style>
 </head>
 <body>
 <header>
-  <h1>🏠 Grundriss-Editor <small style="font-size:11px;font-weight:400;opacity:.55">v0.3.2</small></h1>
+  <h1>🏠 Grundriss-Editor <small style="font-size:11px;font-weight:400;opacity:.55">v0.4.0</small></h1>
   <div class="tabs" id="tabs"></div>
   <div class="tools">
     <button class="tool on" data-tool="select" title="Auswählen/Verschieben (V)">✥ Auswahl</button>
@@ -92,12 +93,20 @@
       <label class="chk"><input type="checkbox" id="pOutline"> Nur Umriss (Balkon/Terrasse)</label>
       <label class="chk"><input type="checkbox" id="pHideLabel"> Label ausblenden (z. B. Gang)</label>
       <div class="hint">Verschieben: ziehen · Größe: Ecken ziehen · Label: violetten Punkt ziehen · Löschen: ⌫</div>
+      <button class="act" id="pSplit" hidden>Flächen trennen</button>
       <button class="act" id="pDelete" style="color:#c22">Raum löschen</button>
+    </div>
+    <div id="multi" hidden>
+      <h2>Mehrfachauswahl</h2>
+      <div class="hint" id="multiHint"></div>
+      <button class="act primary" id="pMerge">⊞ Zu einer Fläche vereinen</button>
+      <div class="hint">Name/Entity übernimmt der erste Raum mit Sensor (sonst der zuerst gewählte).</div>
     </div>
     <h2>Hilfe</h2>
     <div class="hint">1. „🖼 Plan-Bild laden…": Architektenplan als Zeichenvorlage laden (bleibt lokal, wird nie exportiert). Bild oder Projekt-JSON kann auch per Drag &amp; Drop aufs Fenster gezogen werden.<br>
       2. Mit ▭ Räume über die Zimmer ziehen (Raster 5 px).<br>
       3. Raum anklicken → Name + Sensor-Entity zuweisen.<br>
+      3b. L-/T-förmige Räume: mehrere Rechtecke zeichnen, mit <b>Shift-Klick</b> zusammen auswählen → „Zu einer Fläche vereinen". Trennen jederzeit über „Flächen trennen".<br>
       4. „YAML exportieren" → Config in HA einfügen (<code>custom:floorplan-temp-card</code>).<br>
       Projekt wird automatisch im Browser gespeichert.</div>
   </aside>
@@ -132,7 +141,13 @@ try {
 } catch (e) { /* fresh start */ }
 
 let tool = 'select';
-let selId = null;
+let selId = null;   // genau ein Raum ausgewählt (Eigenschaften-Panel)
+let selIds = [];    // volle Auswahl (Shift-Klick = Mehrfachauswahl zum Vereinen)
+function setSel(ids) { selIds = ids; selId = ids.length === 1 ? ids[0] : null; }
+function toggleSel(id, additive) {
+  if (!additive) return setSel([id]);
+  setSel(selIds.includes(id) ? selIds.filter((x) => x !== id) : [...selIds, id]);
+}
 let bgImages = {}; // floorKey -> dataURL (session only, never exported)
 let draft = null;  // {x0,y0,x1,y1} while dragging rect, or {points:[]} for poly
 let drag = null;   // move/resize/vertex/label drag state
@@ -146,9 +161,83 @@ const svg = document.getElementById('svg');
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const el = (t, a = {}) => { const n = document.createElementNS(SVG_NS, t); for (const [k, v] of Object.entries(a)) n.setAttribute(k, v); return n; };
 
+// Union of axis-aligned rects → closed boundary loops (rectilinear polygons).
+// Identical to the card's implementation (dist/floorplan-temp-card.js).
+function rectUnionLoops(rects) {
+  const xs = [...new Set(rects.flatMap((r) => [r[0], r[0] + r[2]]))].sort((a, b) => a - b);
+  const ys = [...new Set(rects.flatMap((r) => [r[1], r[1] + r[3]]))].sort((a, b) => a - b);
+  const nx = xs.length - 1, ny = ys.length - 1;
+  const cov = Array.from({ length: nx }, (_, i) => Array.from({ length: ny }, (_, j) => {
+    const cx = (xs[i] + xs[i + 1]) / 2, cy = (ys[j] + ys[j + 1]) / 2;
+    return rects.some((r) => cx > r[0] && cx < r[0] + r[2] && cy > r[1] && cy < r[1] + r[3]);
+  }));
+  const at = (i, j) => i >= 0 && j >= 0 && i < nx && j < ny && cov[i][j];
+  const out = new Map();
+  const add = (x1, y1, x2, y2) => {
+    const k = x1 + ',' + y1;
+    if (!out.has(k)) out.set(k, []);
+    out.get(k).push([x2, y2]);
+  };
+  for (let i = 0; i < nx; i++) for (let j = 0; j < ny; j++) {
+    if (!cov[i][j]) continue;
+    if (!at(i, j - 1)) add(xs[i], ys[j], xs[i + 1], ys[j]);
+    if (!at(i, j + 1)) add(xs[i + 1], ys[j + 1], xs[i], ys[j + 1]);
+    if (!at(i - 1, j)) add(xs[i], ys[j + 1], xs[i], ys[j]);
+    if (!at(i + 1, j)) add(xs[i + 1], ys[j], xs[i + 1], ys[j + 1]);
+  }
+  const loops = [];
+  while (out.size) {
+    let cur = out.keys().next().value.split(',').map(Number);
+    let dir = null;
+    const loop = [];
+    for (;;) {
+      const k = cur[0] + ',' + cur[1];
+      const cands = out.get(k);
+      if (!cands || !cands.length) break;
+      let pick = 0;
+      if (dir && cands.length > 1) {
+        const score = ([px, py]) => {
+          const nd = [Math.sign(px - cur[0]), Math.sign(py - cur[1])];
+          const cross = dir[0] * nd[1] - dir[1] * nd[0];
+          return cross > 0 ? 0 : cross === 0 ? 1 : 2;
+        };
+        pick = cands.map((c, i) => [score(c), i]).sort((a, b) => a[0] - b[0])[0][1];
+      }
+      const next = cands.splice(pick, 1)[0];
+      if (!cands.length) out.delete(k);
+      loop.push(cur);
+      dir = [Math.sign(next[0] - cur[0]), Math.sign(next[1] - cur[1])];
+      cur = next;
+      if (cur[0] === loop[0][0] && cur[1] === loop[0][1]) break;
+    }
+    const simp = loop.filter((p, i) => {
+      const a = loop[(i - 1 + loop.length) % loop.length], b = loop[(i + 1) % loop.length];
+      return (a[0] - p[0]) * (b[1] - p[1]) - (a[1] - p[1]) * (b[0] - p[0]) !== 0;
+    });
+    if (simp.length >= 3) loops.push(simp);
+  }
+  return loops;
+}
+function roomLoops(r) {
+  if (Array.isArray(r.rects)) return rectUnionLoops(r.rects);
+  if (r.polygon) return [r.polygon];
+  return [[[r.rect[0], r.rect[1]], [r.rect[0] + r.rect[2], r.rect[1]],
+    [r.rect[0] + r.rect[2], r.rect[1] + r.rect[3]], [r.rect[0], r.rect[1] + r.rect[3]]]];
+}
+function loopsToPath(loops) {
+  return loops.map((pts) => 'M' + pts.map((p) => p.join(' ')).join(' L') + ' Z').join(' ');
+}
+function loopArea(pts) {
+  let a = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const [x1, y1] = pts[i], [x2, y2] = pts[(i + 1) % pts.length];
+    a += x1 * y2 - x2 * y1;
+  }
+  return Math.abs(a / 2);
+}
 function roomPoints(r) {
-  return r.polygon || [[r.rect[0], r.rect[1]], [r.rect[0] + r.rect[2], r.rect[1]],
-    [r.rect[0] + r.rect[2], r.rect[1] + r.rect[3]], [r.rect[0], r.rect[1] + r.rect[3]]];
+  const loops = roomLoops(r);
+  return loops.reduce((a, b) => (loopArea(b) > loopArea(a) ? b : a), loops[0]);
 }
 function centroid(pts) {
   let a = 0, cx = 0, cy = 0;
@@ -177,10 +266,15 @@ function render() {
 
   for (const r of f.rooms) {
     const pts = roomPoints(r);
-    const shape = el('polygon', { points: pts.map((p) => p.join(',')).join(' '), 'data-id': r.id });
-    shape.setAttribute('class', 'room-shape' + (r.outline ? ' outl' : r.entity ? '' : ' noent') + (r.id === selId ? ' sel' : ''));
+    const shape = el('path', { d: loopsToPath(roomLoops(r)), 'fill-rule': 'evenodd', 'data-id': r.id });
+    shape.setAttribute('class', 'room-shape' + (r.outline ? ' outl' : r.entity ? '' : ' noent') + (selIds.includes(r.id) ? ' sel' : ''));
     svg.appendChild(shape);
-    const [lx, ly] = r.label || centroid(pts);
+    const roomier = (a, b) => {
+      const ma = Math.min(a[2], a[3]), mb = Math.min(b[2], b[3]);
+      return mb > ma || (mb === ma && b[2] * b[3] > a[2] * a[3]) ? b : a;
+    };
+    const big = Array.isArray(r.rects) ? r.rects.reduce(roomier) : null;
+    const [lx, ly] = r.label || (big ? [big[0] + big[2] / 2, big[1] + big[3] / 2] : centroid(pts));
     if (r.name && r.show_label !== false) {
       const t = el('text', { x: lx, y: ly, class: 'rname' });
       t.textContent = r.name + (r.entity ? ' 🌡' : '');
@@ -190,7 +284,16 @@ function render() {
       // label handle
       const lh = el('circle', { cx: lx, cy: ly + 14, r: 5, class: 'lhandle', 'data-h': 'label' });
       svg.appendChild(lh);
-      if (r.rect) {
+      if (r.rects) {
+        // combined room: show sub-rects dashed + per-rect corner handles
+        r.rects.forEach((rc, i) => {
+          const [x, y, rw, rh] = rc;
+          svg.appendChild(el('rect', { x, y, width: rw, height: rh, class: 'subdiv' }));
+          [[x, y, 'nw'], [x + rw, y, 'ne'], [x + rw, y + rh, 'se'], [x, y + rh, 'sw']].forEach(([hx, hy, dir]) => {
+            svg.appendChild(el('rect', { x: hx - 5, y: hy - 5, width: 10, height: 10, class: 'handle', 'data-h': 'r' + i + ':' + dir }));
+          });
+        });
+      } else if (r.rect) {
         const [x, y, rw, rh] = r.rect;
         [[x, y, 'nw'], [x + rw, y, 'ne'], [x + rw, y + rh, 'se'], [x, y + rh, 'sw']].forEach(([hx, hy, dir]) => {
           svg.appendChild(el('rect', { x: hx - 5, y: hy - 5, width: 10, height: 10, class: 'handle', 'data-h': dir }));
@@ -224,9 +327,9 @@ function renderSidebar() {
   ul.innerHTML = '';
   for (const r of f.rooms) {
     const li = document.createElement('li');
-    li.className = r.id === selId ? 'on' : '';
+    li.className = selIds.includes(r.id) ? 'on' : '';
     li.innerHTML = `<span>${r.name || r.id}</span><span class="e">${r.outline ? 'Umriss' : r.entity || '—'}</span>`;
-    li.onclick = () => { selId = r.id; render(); };
+    li.onclick = (ev) => { toggleSel(r.id, ev.shiftKey); render(); };
     ul.appendChild(li);
   }
   const props = document.getElementById('props');
@@ -237,6 +340,13 @@ function renderSidebar() {
     document.getElementById('pEntity').value = r.entity || '';
     document.getElementById('pOutline').checked = !!r.outline;
     document.getElementById('pHideLabel').checked = r.show_label === false;
+    document.getElementById('pSplit').hidden = !r.rects;
+  }
+  const multi = document.getElementById('multi');
+  multi.hidden = selIds.length < 2;
+  if (selIds.length >= 2) {
+    document.getElementById('multiHint').textContent =
+      `${selIds.length} Räume gewählt: ${selIds.map((id) => (roomById(id) || {}).name || id).join(' + ')}`;
   }
   // tabs
   const tabs = document.getElementById('tabs');
@@ -245,7 +355,7 @@ function renderSidebar() {
     const b = document.createElement('button');
     b.className = 'tab' + (i === project.active ? ' on' : '');
     b.textContent = fl.key.toUpperCase();
-    b.onclick = () => { project.active = i; selId = null; draft = null; render(); persist(); };
+    b.onclick = () => { project.active = i; setSel([]); draft = null; render(); persist(); };
     tabs.appendChild(b);
   });
 }
@@ -282,12 +392,16 @@ svg.addEventListener('pointerdown', (ev) => {
   }
   const id = ev.target.getAttribute && ev.target.getAttribute('data-id');
   if (id) {
-    selId = id;
-    const rr = roomById(id);
-    drag = { type: 'move', start: [x, y], orig: JSON.parse(JSON.stringify(rr)) };
-    svg.setPointerCapture(ev.pointerId);
-  } else {
-    selId = null;
+    if (ev.shiftKey) {
+      toggleSel(id, true); // Mehrfachauswahl zum Vereinen — kein Drag
+    } else {
+      setSel([id]);
+      const rr = roomById(id);
+      drag = { type: 'move', start: [x, y], orig: JSON.parse(JSON.stringify(rr)) };
+      svg.setPointerCapture(ev.pointerId);
+    }
+  } else if (!ev.shiftKey) {
+    setSel([]);
   }
   render();
 });
@@ -303,6 +417,7 @@ svg.addEventListener('pointermove', (ev) => {
   const o = drag.orig;
   if (drag.type === 'move') {
     if (o.rect) r.rect = [snap(o.rect[0] + dx), snap(o.rect[1] + dy), o.rect[2], o.rect[3]];
+    else if (o.rects) r.rects = o.rects.map(([px, py, pw, ph]) => [snap(px + dx), snap(py + dy), pw, ph]);
     else r.polygon = o.polygon.map(([px, py]) => [snap(px + dx), snap(py + dy)]);
     if (o.label) r.label = [snap(o.label[0] + dx), snap(o.label[1] + dy)];
   } else if (drag.type === 'label') {
@@ -310,6 +425,16 @@ svg.addEventListener('pointermove', (ev) => {
   } else if (drag.type.startsWith('v') && o.polygon) {
     const i = parseInt(drag.type.slice(1), 10);
     r.polygon = o.polygon.map((p, j) => (j === i ? [x, y] : p));
+  } else if (/^r\d+:/.test(drag.type) && o.rects) {
+    // resize one sub-rect of a combined room
+    const [, idxStr, dir] = drag.type.match(/^r(\d+):(\w+)$/);
+    const i = parseInt(idxStr, 10);
+    let [rx, ry, rw, rh] = o.rects[i];
+    if (dir.includes('w')) { rw += rx - x; rx = x; }
+    if (dir.includes('n')) { rh += ry - y; ry = y; }
+    if (dir.includes('e')) { rw = x - rx; }
+    if (dir.includes('s')) { rh = y - ry; }
+    if (rw >= SNAP && rh >= SNAP) r.rects = o.rects.map((rc, j) => (j === i ? [rx, ry, rw, rh] : rc));
   } else if (o.rect) {
     let [rx, ry, rw, rh] = o.rect;
     if (drag.type.includes('w')) { rw += rx - x; rx = x; }
@@ -336,7 +461,7 @@ svg.addEventListener('dblclick', () => finishPoly());
 window.addEventListener('keydown', (ev) => {
   if (ev.target.tagName === 'INPUT' || ev.target.tagName === 'TEXTAREA') return;
   if (ev.key === 'Enter') finishPoly();
-  if (ev.key === 'Escape') { draft = null; render(); }
+  if (ev.key === 'Escape') { draft = null; setSel([]); render(); }
   if ((ev.key === 'Backspace' || ev.key === 'Delete') && selId) { deleteRoom(selId); }
   if (ev.key === 'v') setTool('select');
   if (ev.key === 'r') setTool('rect');
@@ -358,7 +483,7 @@ function addRoom(geo) {
   while (roomById(id)) id = 'raum-' + ++n;
   const room = { id, name: 'Raum ' + n, ...geo };
   f.rooms.push(room);
-  selId = id;
+  setSel([id]);
   setTool('select');
   persist();
   render();
@@ -367,10 +492,52 @@ function addRoom(geo) {
 function deleteRoom(id) {
   const f = floor();
   f.rooms = f.rooms.filter((r) => r.id !== id);
-  if (selId === id) selId = null;
+  setSel(selIds.filter((x) => x !== id));
   persist();
   render();
 }
+
+// ---------- combine / split rooms ----------
+function mergeSelected() {
+  const f = floor();
+  const rooms = selIds.map(roomById).filter(Boolean);
+  if (rooms.length < 2) return;
+  if (rooms.some((r) => r.polygon)) {
+    alert('Vereinen geht nur mit Rechteck-Räumen. Polygone bitte als eigenen Raum lassen (oder als Polygon neu zeichnen).');
+    return;
+  }
+  const primary = rooms.find((r) => r.entity) || rooms[0];
+  primary.rects = rooms.flatMap((r) => (r.rects ? r.rects : [r.rect]));
+  delete primary.rect;
+  delete primary.label; // Label neu aus dem Schwerpunkt der Gesamtfläche
+  f.rooms = f.rooms.filter((r) => r === primary || !selIds.includes(r.id));
+  setSel([primary.id]);
+  persist();
+  render();
+}
+function splitRoom() {
+  const r = roomById(selId);
+  if (!r || !r.rects) return;
+  const f = floor();
+  const idx = f.rooms.indexOf(r);
+  const parts = r.rects.map((rc, i) => {
+    if (i === 0) {
+      const first = { ...r, rect: rc };
+      delete first.rects;
+      delete first.label;
+      return first;
+    }
+    let n = i + 1, id = r.id + '-' + n;
+    while (roomById(id)) id = r.id + '-' + ++n;
+    return { id, name: (r.name || r.id) + ' ' + n, rect: rc };
+  });
+  f.rooms.splice(idx, 1, ...parts);
+  setSel(parts.map((p) => p.id));
+  persist();
+  render();
+}
+document.getElementById('pMerge').onclick = mergeSelected;
+document.getElementById('pSplit').onclick = splitRoom;
 
 // ---------- toolbar / panel wiring ----------
 function setTool(t) {
@@ -426,7 +593,7 @@ function importProject(file) {
     try {
       const p = JSON.parse(rd.result);
       if (!Array.isArray(p.floors)) throw new Error('keine "floors"-Liste gefunden');
-      project = p; project.active = project.active || 0; selId = null;
+      project = p; project.active = project.active || 0; setSel([]);
       persist(); render();
     } catch (e) { alert('Ungültige Projektdatei: ' + e.message); }
   };
@@ -457,6 +624,7 @@ function yq(s) { return `'${String(s).replace(/'/g, "''")}'`; }
 function roomYaml(r) {
   const parts = [`id: ${r.id}`, `name: ${yq(r.name || r.id)}`];
   if (r.rect) parts.push(`rect: [${r.rect.join(', ')}]`);
+  else if (r.rects) parts.push(`rects: [${r.rects.map((rc) => `[${rc.join(', ')}]`).join(', ')}]`);
   else parts.push(`polygon: [${r.polygon.map((p) => `[${p.join(', ')}]`).join(', ')}]`);
   if (r.entity) parts.push(`entity: ${r.entity}`);
   if (r.show_label === false) parts.push('show_label: false');
