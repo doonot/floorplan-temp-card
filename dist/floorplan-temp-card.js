@@ -5,7 +5,11 @@
  * No dependencies, no build step. MIT.
  */
 
-const VERSION = '0.4.0';
+const VERSION = '0.5.0';
+
+// mdi:wifi — shown next to the room name when the entity is a real sensor
+// (domain "sensor"), marking live/realtime data vs. placeholder helpers.
+const WIFI_PATH = 'M12,21L15.6,16.2C14.6,15.45 13.35,15 12,15C10.65,15 9.4,15.45 8.4,16.2L12,21M12,3C7.95,3 4.21,4.34 1.2,6.6L3,9C5.5,7.12 8.62,6 12,6C15.38,6 18.5,7.12 21,9L22.8,6.6C19.79,4.34 16.05,3 12,3M12,9C9.3,9 6.81,9.89 4.8,11.4L6.6,13.8C8.1,12.67 9.97,12 12,12C14.03,12 15.9,12.67 17.4,13.8L19.2,11.4C17.19,9.89 14.7,9 12,9Z';
 
 const DEFAULT_THRESHOLDS = [
   { below: 19, color: '#4a90d9' },   // kühl – ruhiges Blau
@@ -265,6 +269,7 @@ class FloorplanTempCard extends HTMLElement {
       .room-value { font-size: ${fsValue}px; font-weight: 800; }
       .delta { font-size: ${fsName * 0.95}px; font-weight: 400; }
       .delta-up { fill: #e25c4a; } .delta-down { fill: #4a90d9; }
+      .live-icon { fill: #2f7fd6; opacity: 0.9; pointer-events: none; }
     `;
     this.shadowRoot.appendChild(style);
 
@@ -278,6 +283,7 @@ class FloorplanTempCard extends HTMLElement {
     const pad = 6;
     const svg = svgEl('svg', { viewBox: `${-pad} ${-pad} ${w + 2 * pad} ${h + 2 * pad}` });
     this._refs.clear();
+    const pendingIcons = [];
 
     for (const room of c.rooms) {
       const g = svgEl('g');
@@ -305,12 +311,23 @@ class FloorplanTempCard extends HTMLElement {
       const biggest = Array.isArray(room.rects) ? room.rects.reduce(roomier) : null;
       const [lx, ly] = room.label
         || (biggest ? [biggest[0] + biggest[2] / 2, biggest[1] + biggest[3] / 2] : centroid(points));
-      let valueText = null, deltaText = null;
+      let valueText = null, deltaText = null, liveIcon = null;
       const showLabel = room.show_label !== false;
       if (showLabel && room.name) {
-        const nameText = svgEl('text', { x: lx, y: room.entity ? ly - fsValue * 0.85 : ly, class: 'room-name' });
+        const nameY = room.entity ? ly - fsValue * 0.85 : ly;
+        const nameText = svgEl('text', { x: lx, y: nameY, class: 'room-name' });
         nameText.textContent = room.name;
         g.appendChild(nameText);
+        if (room.entity && room.entity.split('.')[0] === 'sensor') {
+          liveIcon = svgEl('path', { d: WIFI_PATH, class: 'live-icon' });
+          const tip = svgEl('title');
+          tip.textContent = 'Echter Sensor – Live-Daten';
+          liveIcon.appendChild(tip);
+          g.appendChild(liveIcon);
+          // Position right of the name once the text is laid out; fall back to
+          // an estimated width if the card isn't in the DOM yet.
+          pendingIcons.push({ liveIcon, nameText, lx, nameY, name: room.name });
+        }
       }
       if (showLabel && room.entity) {
         valueText = svgEl('text', { x: lx, y: ly + fsValue * 0.45, class: 'room-value' });
@@ -325,11 +342,24 @@ class FloorplanTempCard extends HTMLElement {
         g.addEventListener('click', () => this._openMoreInfo(room.entity));
       }
       svg.appendChild(g);
-      this._refs.set(room.id, { room, shape, valueText, deltaText });
+      this._refs.set(room.id, { room, shape, valueText, deltaText, liveIcon });
     }
 
     card.appendChild(svg);
     this.shadowRoot.appendChild(card);
+
+    const iconScale = (fsName * 0.95) / 24; // mdi paths are 24×24
+    requestAnimationFrame(() => {
+      for (const p of pendingIcons) {
+        let len = 0;
+        try { len = p.nameText.getComputedTextLength(); } catch (e) { /* not rendered yet */ }
+        if (!len) len = p.name.length * fsName * 0.62;
+        p.liveIcon.setAttribute(
+          'transform',
+          `translate(${p.lx + len / 2 + fsName * 0.3}, ${p.nameY - fsName * 0.82}) scale(${iconScale})`
+        );
+      }
+    });
   }
 
   // ---------- state → color/labels ----------
@@ -358,10 +388,14 @@ class FloorplanTempCard extends HTMLElement {
 
   _updateAll() {
     if (!this._hass || !this._config) return;
-    for (const { room, shape, valueText, deltaText } of this._refs.values()) {
+    for (const { room, shape, valueText, deltaText, liveIcon } of this._refs.values()) {
       if (!room.entity || room.outline) continue;
       const st = this._hass.states[room.entity];
       const temp = st ? parseFloat(st.state) : NaN;
+      if (liveIcon) {
+        // grey out the live badge while the sensor is unavailable
+        liveIcon.style.fill = Number.isFinite(temp) ? '' : 'var(--secondary-text-color, #9aa7b4)';
+      }
       if (Number.isFinite(temp)) {
         const sh = this._shadesFor(temp);
         shape.setAttribute('fill', sh.fill);
