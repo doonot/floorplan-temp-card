@@ -5,7 +5,7 @@
  * No dependencies, no build step. MIT.
  */
 
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 
 const DEFAULT_THRESHOLDS = [
   { below: 19, color: '#4a90d9' },   // kühl – ruhiges Blau
@@ -116,8 +116,8 @@ class FloorplanTempCard extends HTMLElement {
       thresholds: config.thresholds || DEFAULT_THRESHOLDS,
       gradient: { min_color: '#3b9dff', max_color: '#ff4d4d', ...(config.gradient || {}) },
       delta_hours: config.delta_hours === undefined ? 1 : Number(config.delta_hours),
-      fill_opacity: config.fill_opacity === undefined ? 0.4 : Number(config.fill_opacity),
       unit: config.unit === undefined ? '°' : config.unit,
+      trend_suffix: config.trend_suffix || '',
       wall_color: config.wall_color,
       title: config.title,
       rooms: config.rooms,
@@ -177,13 +177,11 @@ class FloorplanTempCard extends HTMLElement {
       .outline { fill: none; stroke: var(--secondary-text-color, #9aa7b4);
                  stroke-width: 2; stroke-dasharray: 7 6; opacity: 0.9; }
       text { font-family: var(--paper-font-body1_-_font-family, -apple-system, 'Segoe UI', Roboto, sans-serif);
-             text-anchor: middle; pointer-events: none;
-             paint-order: stroke; stroke: var(--card-background-color, #fff); stroke-width: 3px;
-             stroke-opacity: .75; stroke-linejoin: round; }
-      .room-name { font-size: ${fsName}px; font-weight: 700; letter-spacing: .09em;
-                   text-transform: uppercase; fill: var(--secondary-text-color, #77808c); }
+             text-anchor: middle; pointer-events: none; }
+      .room-name { font-size: ${fsName}px; font-weight: 600;
+                   fill: var(--secondary-text-color, #77808c); }
       .room-value { font-size: ${fsValue}px; font-weight: 800; }
-      .delta { font-size: ${fsName * 1.05}px; font-weight: 400; stroke: none; }
+      .delta { font-size: ${fsName * 0.95}px; font-weight: 400; }
       .delta-up { fill: #e25c4a; } .delta-down { fill: #4a90d9; }
     `;
     this.shadowRoot.appendChild(style);
@@ -295,8 +293,10 @@ class FloorplanTempCard extends HTMLElement {
           deltaText.textContent = '';
         } else {
           const up = d > 0;
+          const c = this._config;
           deltaText.setAttribute('class', `delta ${up ? 'delta-up' : 'delta-down'}`);
-          deltaText.textContent = `${up ? '▲' : '▼'} ${this._fmt(Math.abs(d))}`;
+          deltaText.textContent =
+            `${up ? '+' : '−'}${this._fmt(Math.abs(d))}${c.unit}${c.trend_suffix ? ' ' + c.trend_suffix : ''}`;
         }
       }
     }
