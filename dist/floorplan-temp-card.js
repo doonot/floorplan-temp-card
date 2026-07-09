@@ -5,13 +5,13 @@
  * No dependencies, no build step. MIT.
  */
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 
 const DEFAULT_THRESHOLDS = [
-  { below: 19, color: '#3b9dff' },
-  { below: 21, color: '#17b890' },
-  { below: 23.5, color: '#e08b1a' },
-  { color: '#ff4d4d' },
+  { below: 19, color: '#4a90d9' },   // kühl – ruhiges Blau
+  { below: 21, color: '#3aa981' },   // frisch – Salbeigrün
+  { below: 23.5, color: '#e39a4d' }, // angenehm – warmes Apricot
+  { color: '#e25c4a' },              // warm – sanftes Coral
 ];
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -44,15 +44,22 @@ function rgbToHsl([r, g, b]) {
 
 // Interpolate in HSL space so a blue→red temperature gradient passes through
 // green/yellow (like a real temperature scale) instead of murky purple.
-function mixColors(c1, c2, t) {
+// Plain linear hue interpolation (no shortest-path wrap): blue(210°)→red(0°)
+// passes through cyan/green/yellow.
+function mixHsl(c1, c2, t) {
   const a = rgbToHsl(hexToRgb(c1));
   const b = rgbToHsl(hexToRgb(c2));
-  // Plain linear hue interpolation (no shortest-path wrap): blue(210°)→red(0°)
-  // passes through cyan/green/yellow like a real temperature scale.
-  const h = a[0] + (b[0] - a[0]) * t;
-  const s = a[1] + (b[1] - a[1]) * t;
-  const l = a[2] + (b[2] - a[2]) * t;
-  return `hsl(${Math.round(h * 360)},${Math.round(s * 100)}%,${Math.round(l * 100)}%)`;
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+}
+
+// Derive a designed pair from one accent color: a soft pastel room fill and a
+// deeper, saturated tone for the value text — instead of alpha-washed fills.
+function shades([h, s]) {
+  const H = Math.round(h * 360);
+  return {
+    fill: `hsl(${H},${Math.round(Math.min(1, s * 0.85) * 100)}%,88%)`,
+    text: `hsl(${H},${Math.round(Math.min(1, s * 0.8) * 100)}%,34%)`,
+  };
 }
 
 function centroid(points) {
@@ -171,15 +178,13 @@ class FloorplanTempCard extends HTMLElement {
                  stroke-width: 2; stroke-dasharray: 7 6; opacity: 0.9; }
       text { font-family: var(--paper-font-body1_-_font-family, -apple-system, 'Segoe UI', Roboto, sans-serif);
              text-anchor: middle; pointer-events: none;
-             paint-order: stroke; stroke: var(--card-background-color, #fff); stroke-width: 4px;
-             stroke-linejoin: round; }
-      .room-name { font-size: ${fsName}px; font-weight: 600; letter-spacing: .03em;
-                   fill: var(--secondary-text-color, #6b7480); }
-      .room-value { font-size: ${fsValue}px; font-weight: 800;
-                    fill: var(--primary-text-color, #1f2733); }
-      .delta { font-size: ${fsName}px; font-weight: 700; }
-      .delta-up { fill: #ff4d4d; } .delta-down { fill: #3b9dff; }
-      .delta-flat { fill: var(--secondary-text-color, #9aa7b4); }
+             paint-order: stroke; stroke: var(--card-background-color, #fff); stroke-width: 3px;
+             stroke-opacity: .75; stroke-linejoin: round; }
+      .room-name { font-size: ${fsName}px; font-weight: 700; letter-spacing: .09em;
+                   text-transform: uppercase; fill: var(--secondary-text-color, #77808c); }
+      .room-value { font-size: ${fsValue}px; font-weight: 800; }
+      .delta { font-size: ${fsName * 1.05}px; font-weight: 400; stroke: none; }
+      .delta-up { fill: #e25c4a; } .delta-down { fill: #4a90d9; }
     `;
     this.shadowRoot.appendChild(style);
 
@@ -209,35 +214,33 @@ class FloorplanTempCard extends HTMLElement {
         shape.setAttribute('class', 'outline');
       } else {
         shape.setAttribute('class', room.entity ? 'wall' : 'wall neutral');
-        if (room.entity) shape.setAttribute('fill-opacity', String(c.fill_opacity));
+        // Neutral until the first hass update paints the derived shade.
+        if (room.entity) shape.setAttribute('fill', 'var(--secondary-background-color, #eef1f4)');
       }
       g.appendChild(shape);
 
       const [lx, ly] = room.label || centroid(points);
-      const fsValue2 = Math.max(10, w * 0.034);
-      let nameText = null, valueText = null, deltaTspan = null;
+      let valueText = null, deltaText = null;
       const showLabel = room.show_label !== false;
       if (showLabel && room.name) {
-        nameText = svgEl('text', { x: lx, y: room.entity ? ly - fsValue2 * 0.55 : ly, class: 'room-name' });
+        const nameText = svgEl('text', { x: lx, y: room.entity ? ly - fsValue * 0.85 : ly, class: 'room-name' });
         nameText.textContent = room.name;
         g.appendChild(nameText);
       }
       if (showLabel && room.entity) {
-        valueText = svgEl('text', { x: lx, y: ly + fsValue2 * 0.65, class: 'room-value' });
-        const valueTspan = svgEl('tspan');
-        valueTspan.textContent = '–';
-        deltaTspan = svgEl('tspan', { dx: '0.35em', class: 'delta delta-flat' });
-        valueText.appendChild(valueTspan);
-        valueText.appendChild(deltaTspan);
+        valueText = svgEl('text', { x: lx, y: ly + fsValue * 0.45, class: 'room-value' });
+        valueText.textContent = '–';
         g.appendChild(valueText);
-        valueText._valueTspan = valueTspan;
+        // Trend on its own line below the value: regular weight, no halo.
+        deltaText = svgEl('text', { x: lx, y: ly + fsValue * 0.45 + fsName * 1.6, class: 'delta' });
+        g.appendChild(deltaText);
       }
       if (room.entity) {
         g.classList.add('room-hit');
         g.addEventListener('click', () => this._openMoreInfo(room.entity));
       }
       svg.appendChild(g);
-      this._refs.set(room.id, { room, shape, valueText, deltaTspan });
+      this._refs.set(room.id, { room, shape, valueText, deltaText });
     }
 
     card.appendChild(svg);
@@ -246,17 +249,18 @@ class FloorplanTempCard extends HTMLElement {
 
   // ---------- state → color/labels ----------
 
-  _colorFor(temp) {
+  _shadesFor(temp) {
     const c = this._config;
     if (c.color_mode === 'gradient') {
       const g = c.gradient;
       const t = Math.min(1, Math.max(0, (temp - g.min) / (g.max - g.min)));
-      return mixColors(g.min_color, g.max_color, t);
+      return shades(mixHsl(g.min_color, g.max_color, t));
     }
+    let color = c.thresholds[c.thresholds.length - 1].color;
     for (const th of c.thresholds) {
-      if (th.below === undefined || temp < th.below) return th.color;
+      if (th.below === undefined || temp < th.below) { color = th.color; break; }
     }
-    return c.thresholds[c.thresholds.length - 1].color;
+    return shades(rgbToHsl(hexToRgb(color)));
   }
 
   _fmt(n, digits = 1) {
@@ -269,26 +273,30 @@ class FloorplanTempCard extends HTMLElement {
 
   _updateAll() {
     if (!this._hass || !this._config) return;
-    for (const { room, shape, valueText, deltaTspan } of this._refs.values()) {
+    for (const { room, shape, valueText, deltaText } of this._refs.values()) {
       if (!room.entity || room.outline) continue;
       const st = this._hass.states[room.entity];
       const temp = st ? parseFloat(st.state) : NaN;
       if (Number.isFinite(temp)) {
-        shape.setAttribute('fill', this._colorFor(temp));
-        if (valueText) valueText._valueTspan.textContent = this._fmt(temp) + this._config.unit;
+        const sh = this._shadesFor(temp);
+        shape.setAttribute('fill', sh.fill);
+        if (valueText) {
+          valueText.textContent = this._fmt(temp) + this._config.unit;
+          valueText.style.fill = sh.text; // inline style wins over the class fill
+        }
       } else {
         shape.setAttribute('fill', 'var(--secondary-background-color, #eef1f4)');
-        if (valueText) valueText._valueTspan.textContent = '–';
+        if (valueText) { valueText.textContent = '–'; valueText.style.fill = ''; }
       }
-      if (deltaTspan) {
+      if (deltaText) {
         const d = this._deltas.get(room.entity);
-        if (d === null || d === undefined || !Number.isFinite(temp)) {
-          deltaTspan.textContent = '';
+        // No (meaningful) trend → show nothing at all.
+        if (d === null || d === undefined || !Number.isFinite(temp) || Math.abs(d) < 0.1) {
+          deltaText.textContent = '';
         } else {
-          const arrow = d > 0.05 ? '▲' : d < -0.05 ? '▼' : '·';
-          const cls = d > 0.05 ? 'delta-up' : d < -0.05 ? 'delta-down' : 'delta-flat';
-          deltaTspan.setAttribute('class', `delta ${cls}`);
-          deltaTspan.textContent = `${arrow}${this._fmt(Math.abs(d))}`;
+          const up = d > 0;
+          deltaText.setAttribute('class', `delta ${up ? 'delta-up' : 'delta-down'}`);
+          deltaText.textContent = `${up ? '▲' : '▼'} ${this._fmt(Math.abs(d))}`;
         }
       }
     }
