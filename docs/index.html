@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Floorplan Temp Card · Editor</title>
+<style>
+  :root{--bg:#eef1f5;--panel:#fff;--ink:#1f2733;--muted:#6b7480;--line:#dde4ec;--accent:#17b890;
+        --sel:#7c3aed;--shadow:0 1px 2px rgba(16,24,40,.05),0 8px 24px rgba(16,24,40,.09)}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--ink);font:14px/1.45 -apple-system,'Segoe UI',Roboto,sans-serif;
+       display:flex;flex-direction:column}
+  header{display:flex;align-items:center;gap:10px;padding:10px 16px;background:var(--panel);
+         border-bottom:1px solid var(--line);flex-wrap:wrap}
+  header h1{font-size:15px;font-weight:800;margin:0 12px 0 0}
+  .tabs{display:flex;gap:4px}
+  .tab{padding:6px 14px;border-radius:9px;border:1px solid var(--line);background:#f6f8fb;cursor:pointer;font-weight:700}
+  .tab.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .tools{display:flex;gap:4px;margin-left:8px}
+  .tool{padding:6px 12px;border-radius:9px;border:1px solid var(--line);background:#f6f8fb;cursor:pointer}
+  .tool.on{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700}
+  .sp{flex:1}
+  button.act{padding:6px 12px;border-radius:9px;border:1px solid var(--line);background:#f6f8fb;cursor:pointer}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700}
+  main{flex:1;display:flex;min-height:0}
+  #stage{flex:1;overflow:auto;display:flex;align-items:flex-start;justify-content:center;padding:18px}
+  #stage svg{background:#fff;border-radius:14px;box-shadow:var(--shadow);touch-action:none}
+  aside{width:300px;background:var(--panel);border-left:1px solid var(--line);padding:14px;overflow:auto}
+  aside h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:14px 0 6px}
+  aside h2:first-child{margin-top:0}
+  .field{margin-bottom:8px}
+  .field label{display:block;font-size:11.5px;font-weight:700;color:var(--muted);margin-bottom:2px}
+  .field input[type=text],.field input[type=number]{width:100%;padding:6px 8px;border:1px solid var(--line);
+      border-radius:8px;font:inherit}
+  .chk{display:flex;align-items:center;gap:6px;margin:6px 0;font-weight:600}
+  .hint{font-size:11.5px;color:var(--muted);margin:6px 0}
+  .rooms{list-style:none;margin:0;padding:0}
+  .rooms li{padding:5px 8px;border-radius:7px;cursor:pointer;display:flex;justify-content:space-between;gap:8px}
+  .rooms li.on{background:#efe9ff;outline:1px solid var(--sel)}
+  .rooms li .e{color:var(--muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:130px}
+  dialog{border:none;border-radius:16px;box-shadow:var(--shadow);padding:18px;width:min(680px,90vw)}
+  dialog textarea{width:100%;height:320px;font:12px/1.4 ui-monospace,Menlo,monospace;border:1px solid var(--line);
+      border-radius:10px;padding:10px;white-space:pre}
+  dialog .row{display:flex;gap:8px;justify-content:flex-end;margin-top:10px}
+  /* SVG */
+  .room-shape{stroke:#2b3542;stroke-width:2.5;fill:#fff3e0;fill-opacity:.75;cursor:move}
+  .room-shape.noent{fill:#eef1f4}
+  .room-shape.outl{fill:none;stroke:#9aa7b4;stroke-width:2;stroke-dasharray:7 6}
+  .room-shape.sel{stroke:var(--sel);stroke-width:3}
+  .rname{font:600 13px -apple-system,sans-serif;fill:#33404f;text-anchor:middle;pointer-events:none}
+  .handle{fill:#fff;stroke:var(--sel);stroke-width:2;cursor:nwse-resize}
+  .vhandle{fill:#fff;stroke:var(--sel);stroke-width:2;cursor:grab}
+  .lhandle{fill:var(--sel);opacity:.85;cursor:grab}
+  .draft{fill:rgba(23,184,144,.15);stroke:var(--accent);stroke-width:2;stroke-dasharray:5 4}
+  #bgimg{pointer-events:none}
+</style>
+</head>
+<body>
+<header>
+  <h1>🏠 Grundriss-Editor</h1>
+  <div class="tabs" id="tabs"></div>
+  <div class="tools">
+    <button class="tool on" data-tool="select" title="Auswählen/Verschieben (V)">✥ Auswahl</button>
+    <button class="tool" data-tool="rect" title="Rechteck ziehen (R)">▭ Raum</button>
+    <button class="tool" data-tool="poly" title="Polygon klicken, Enter schließt (P)">⬠ Polygon</button>
+  </div>
+  <div class="sp"></div>
+  <label class="hint">Bild <input type="file" id="bgfile" accept="image/*" style="width:170px"></label>
+  <label class="hint">Deckkraft <input type="range" id="bgop" min="0" max="100" value="40" style="width:80px;vertical-align:middle"></label>
+  <button class="act" id="saveProj">Projekt ↓</button>
+  <label class="act" style="cursor:pointer">Projekt ↑<input type="file" id="loadProj" accept=".json" hidden></label>
+  <button class="act primary" id="exportBtn">YAML exportieren</button>
+</header>
+<main>
+  <div id="stage"><svg id="svg"></svg></div>
+  <aside>
+    <h2>Stockwerk</h2>
+    <div class="field" style="display:flex;gap:6px">
+      <span style="flex:1"><label>Breite</label><input type="number" id="cw" min="50" step="5"></span>
+      <span style="flex:1"><label>Höhe</label><input type="number" id="ch" min="50" step="5"></span>
+    </div>
+    <h2>Räume <span id="roomCount" style="font-weight:400"></span></h2>
+    <ul class="rooms" id="roomList"></ul>
+    <div id="props" hidden>
+      <h2>Ausgewählter Raum</h2>
+      <div class="field"><label>Name</label><input type="text" id="pName"></div>
+      <div class="field"><label>Entity (Temperatur-Sensor, leer = unbeheizt)</label>
+        <input type="text" id="pEntity" placeholder="sensor.xyz_temperatur" list="entlist"><datalist id="entlist"></datalist></div>
+      <label class="chk"><input type="checkbox" id="pOutline"> Nur Umriss (Balkon/Terrasse)</label>
+      <label class="chk"><input type="checkbox" id="pHideLabel"> Label ausblenden (z. B. Gang)</label>
+      <div class="hint">Verschieben: ziehen · Größe: Ecken ziehen · Label: violetten Punkt ziehen · Löschen: ⌫</div>
+      <button class="act" id="pDelete" style="color:#c22">Raum löschen</button>
+    </div>
+    <h2>Hilfe</h2>
+    <div class="hint">1. Architektenplan als Bild laden (bleibt lokal, wird nie exportiert).<br>
+      2. Mit ▭ Räume über die Zimmer ziehen (Raster 5 px).<br>
+      3. Raum anklicken → Name + Sensor-Entity zuweisen.<br>
+      4. „YAML exportieren" → Config in HA einfügen (<code>custom:floorplan-temp-card</code>).<br>
+      Projekt wird automatisch im Browser gespeichert.</div>
+  </aside>
+</main>
+<dialog id="dlg">
+  <h3 style="margin:0 0 8px">Karten-Config (YAML)</h3>
+  <textarea id="yamlOut" readonly></textarea>
+  <div class="row">
+    <button class="act" id="copyYaml">In Zwischenablage kopieren</button>
+    <button class="act" onclick="dlg.close()">Schließen</button>
+  </div>
+</dialog>
+<script>
+'use strict';
+const SNAP = 5;
+const LSKEY = 'floorplan-temp-editor-v1';
+const snap = (v) => Math.round(v / SNAP) * SNAP;
+
+// ---------- state ----------
+const defaultProject = () => ({
+  floors: [
+    { key: 'eg', title: 'Erdgeschoss', canvas: [645, 1160], rooms: [] },
+    { key: 'og', title: 'Obergeschoss', canvas: [645, 1160], rooms: [] },
+    { key: 'ug', title: 'Untergeschoss', canvas: [645, 1160], rooms: [] },
+  ],
+  active: 0,
+});
+let project = defaultProject();
+try {
+  const saved = localStorage.getItem(LSKEY);
+  if (saved) project = JSON.parse(saved);
+} catch (e) { /* fresh start */ }
+
+let tool = 'select';
+let selId = null;
+let bgImages = {}; // floorKey -> dataURL (session only, never exported)
+let draft = null;  // {x0,y0,x1,y1} while dragging rect, or {points:[]} for poly
+let drag = null;   // move/resize/vertex/label drag state
+
+const floor = () => project.floors[project.active];
+const roomById = (id) => floor().rooms.find((r) => r.id === id);
+const persist = () => { try { localStorage.setItem(LSKEY, JSON.stringify(project)); } catch (e) {} };
+
+// ---------- svg rendering ----------
+const svg = document.getElementById('svg');
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const el = (t, a = {}) => { const n = document.createElementNS(SVG_NS, t); for (const [k, v] of Object.entries(a)) n.setAttribute(k, v); return n; };
+
+function roomPoints(r) {
+  return r.polygon || [[r.rect[0], r.rect[1]], [r.rect[0] + r.rect[2], r.rect[1]],
+    [r.rect[0] + r.rect[2], r.rect[1] + r.rect[3]], [r.rect[0], r.rect[1] + r.rect[3]]];
+}
+function centroid(pts) {
+  let a = 0, cx = 0, cy = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const [x1, y1] = pts[i], [x2, y2] = pts[(i + 1) % pts.length];
+    const f = x1 * y2 - x2 * y1; a += f; cx += (x1 + x2) * f; cy += (y1 + y2) * f;
+  }
+  if (Math.abs(a) < 1e-6) return [pts.reduce((s, p) => s + p[0], 0) / pts.length, pts.reduce((s, p) => s + p[1], 0) / pts.length];
+  a *= 0.5; return [cx / (6 * a), cy / (6 * a)];
+}
+
+function render() {
+  const f = floor();
+  const [w, h] = f.canvas;
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  const scale = Math.min(1.2, (window.innerHeight - 140) / h);
+  svg.setAttribute('width', w * scale);
+  svg.setAttribute('height', h * scale);
+  svg.innerHTML = '';
+
+  if (bgImages[f.key]) {
+    const img = el('image', { id: 'bgimg', href: bgImages[f.key], x: 0, y: 0, width: w, height: h,
+      preserveAspectRatio: 'xMidYMid meet', opacity: document.getElementById('bgop').value / 100 });
+    svg.appendChild(img);
+  }
+
+  for (const r of f.rooms) {
+    const pts = roomPoints(r);
+    const shape = el('polygon', { points: pts.map((p) => p.join(',')).join(' '), 'data-id': r.id });
+    shape.setAttribute('class', 'room-shape' + (r.outline ? ' outl' : r.entity ? '' : ' noent') + (r.id === selId ? ' sel' : ''));
+    svg.appendChild(shape);
+    const [lx, ly] = r.label || centroid(pts);
+    if (r.name && r.show_label !== false) {
+      const t = el('text', { x: lx, y: ly, class: 'rname' });
+      t.textContent = r.name + (r.entity ? ' 🌡' : '');
+      svg.appendChild(t);
+    }
+    if (r.id === selId) {
+      // label handle
+      const lh = el('circle', { cx: lx, cy: ly + 14, r: 5, class: 'lhandle', 'data-h': 'label' });
+      svg.appendChild(lh);
+      if (r.rect) {
+        const [x, y, rw, rh] = r.rect;
+        [[x, y, 'nw'], [x + rw, y, 'ne'], [x + rw, y + rh, 'se'], [x, y + rh, 'sw']].forEach(([hx, hy, dir]) => {
+          svg.appendChild(el('rect', { x: hx - 5, y: hy - 5, width: 10, height: 10, class: 'handle', 'data-h': dir }));
+        });
+      } else {
+        r.polygon.forEach((p, i) => {
+          svg.appendChild(el('circle', { cx: p[0], cy: p[1], r: 5, class: 'vhandle', 'data-h': 'v' + i }));
+        });
+      }
+    }
+  }
+
+  if (draft) {
+    if (draft.points) {
+      const d = el('polyline', { points: draft.points.concat([draft.cursor || draft.points[draft.points.length - 1]]).map((p) => p.join(',')).join(' '), class: 'draft' });
+      svg.appendChild(d);
+    } else {
+      const x = Math.min(draft.x0, draft.x1), y = Math.min(draft.y0, draft.y1);
+      svg.appendChild(el('rect', { x, y, width: Math.abs(draft.x1 - draft.x0), height: Math.abs(draft.y1 - draft.y0), class: 'draft' }));
+    }
+  }
+  renderSidebar();
+}
+
+function renderSidebar() {
+  const f = floor();
+  document.getElementById('cw').value = f.canvas[0];
+  document.getElementById('ch').value = f.canvas[1];
+  document.getElementById('roomCount').textContent = `(${f.rooms.length})`;
+  const ul = document.getElementById('roomList');
+  ul.innerHTML = '';
+  for (const r of f.rooms) {
+    const li = document.createElement('li');
+    li.className = r.id === selId ? 'on' : '';
+    li.innerHTML = `<span>${r.name || r.id}</span><span class="e">${r.outline ? 'Umriss' : r.entity || '—'}</span>`;
+    li.onclick = () => { selId = r.id; render(); };
+    ul.appendChild(li);
+  }
+  const props = document.getElementById('props');
+  const r = roomById(selId);
+  props.hidden = !r;
+  if (r) {
+    document.getElementById('pName').value = r.name || '';
+    document.getElementById('pEntity').value = r.entity || '';
+    document.getElementById('pOutline').checked = !!r.outline;
+    document.getElementById('pHideLabel').checked = r.show_label === false;
+  }
+  // tabs
+  const tabs = document.getElementById('tabs');
+  tabs.innerHTML = '';
+  project.floors.forEach((fl, i) => {
+    const b = document.createElement('button');
+    b.className = 'tab' + (i === project.active ? ' on' : '');
+    b.textContent = fl.key.toUpperCase();
+    b.onclick = () => { project.active = i; selId = null; draft = null; render(); persist(); };
+    tabs.appendChild(b);
+  });
+}
+
+// ---------- pointer interaction ----------
+function svgPoint(ev) {
+  const pt = svg.createSVGPoint();
+  pt.x = ev.clientX; pt.y = ev.clientY;
+  const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+  return [snap(p.x), snap(p.y)];
+}
+
+svg.addEventListener('pointerdown', (ev) => {
+  const [x, y] = svgPoint(ev);
+  const h = ev.target.getAttribute && ev.target.getAttribute('data-h');
+  const r = roomById(selId);
+
+  if (tool === 'rect') {
+    draft = { x0: x, y0: y, x1: x, y1: y };
+    svg.setPointerCapture(ev.pointerId);
+    return;
+  }
+  if (tool === 'poly') {
+    if (!draft) draft = { points: [] };
+    draft.points.push([x, y]);
+    render();
+    return;
+  }
+  // select tool
+  if (h && r) {
+    drag = { type: h, start: [x, y], orig: JSON.parse(JSON.stringify(r)) };
+    svg.setPointerCapture(ev.pointerId);
+    return;
+  }
+  const id = ev.target.getAttribute && ev.target.getAttribute('data-id');
+  if (id) {
+    selId = id;
+    const rr = roomById(id);
+    drag = { type: 'move', start: [x, y], orig: JSON.parse(JSON.stringify(rr)) };
+    svg.setPointerCapture(ev.pointerId);
+  } else {
+    selId = null;
+  }
+  render();
+});
+
+svg.addEventListener('pointermove', (ev) => {
+  const [x, y] = svgPoint(ev);
+  if (draft && !draft.points) { draft.x1 = x; draft.y1 = y; render(); return; }
+  if (draft && draft.points) { draft.cursor = [x, y]; render(); return; }
+  if (!drag) return;
+  const r = roomById(selId);
+  if (!r) return;
+  const dx = x - drag.start[0], dy = y - drag.start[1];
+  const o = drag.orig;
+  if (drag.type === 'move') {
+    if (o.rect) r.rect = [snap(o.rect[0] + dx), snap(o.rect[1] + dy), o.rect[2], o.rect[3]];
+    else r.polygon = o.polygon.map(([px, py]) => [snap(px + dx), snap(py + dy)]);
+    if (o.label) r.label = [snap(o.label[0] + dx), snap(o.label[1] + dy)];
+  } else if (drag.type === 'label') {
+    r.label = [x, y - 14];
+  } else if (drag.type.startsWith('v') && o.polygon) {
+    const i = parseInt(drag.type.slice(1), 10);
+    r.polygon = o.polygon.map((p, j) => (j === i ? [x, y] : p));
+  } else if (o.rect) {
+    let [rx, ry, rw, rh] = o.rect;
+    if (drag.type.includes('w')) { rw += rx - x; rx = x; }
+    if (drag.type.includes('n')) { rh += ry - y; ry = y; }
+    if (drag.type.includes('e')) { rw = x - rx; }
+    if (drag.type.includes('s')) { rh = y - ry; }
+    if (rw >= SNAP && rh >= SNAP) r.rect = [rx, ry, rw, rh];
+  }
+  render();
+});
+
+svg.addEventListener('pointerup', () => {
+  if (draft && !draft.points) {
+    const x = Math.min(draft.x0, draft.x1), y = Math.min(draft.y0, draft.y1);
+    const w = Math.abs(draft.x1 - draft.x0), h = Math.abs(draft.y1 - draft.y0);
+    draft = null;
+    if (w >= SNAP * 2 && h >= SNAP * 2) addRoom({ rect: [x, y, w, h] });
+    else render();
+  }
+  if (drag) { drag = null; persist(); }
+});
+
+svg.addEventListener('dblclick', () => finishPoly());
+window.addEventListener('keydown', (ev) => {
+  if (ev.target.tagName === 'INPUT' || ev.target.tagName === 'TEXTAREA') return;
+  if (ev.key === 'Enter') finishPoly();
+  if (ev.key === 'Escape') { draft = null; render(); }
+  if ((ev.key === 'Backspace' || ev.key === 'Delete') && selId) { deleteRoom(selId); }
+  if (ev.key === 'v') setTool('select');
+  if (ev.key === 'r') setTool('rect');
+  if (ev.key === 'p') setTool('poly');
+});
+
+function finishPoly() {
+  if (draft && draft.points && draft.points.length >= 3) {
+    const pts = draft.points;
+    draft = null;
+    addRoom({ polygon: pts });
+  } else { draft = null; render(); }
+}
+
+function addRoom(geo) {
+  const f = floor();
+  let n = f.rooms.length + 1;
+  let id = 'raum-' + n;
+  while (roomById(id)) id = 'raum-' + ++n;
+  const room = { id, name: 'Raum ' + n, ...geo };
+  f.rooms.push(room);
+  selId = id;
+  setTool('select');
+  persist();
+  render();
+}
+
+function deleteRoom(id) {
+  const f = floor();
+  f.rooms = f.rooms.filter((r) => r.id !== id);
+  if (selId === id) selId = null;
+  persist();
+  render();
+}
+
+// ---------- toolbar / panel wiring ----------
+function setTool(t) {
+  tool = t; draft = null;
+  document.querySelectorAll('.tool').forEach((b) => b.classList.toggle('on', b.dataset.tool === t));
+  render();
+}
+document.querySelectorAll('.tool').forEach((b) => (b.onclick = () => setTool(b.dataset.tool)));
+
+for (const [id, key] of [['pName', 'name'], ['pEntity', 'entity']]) {
+  document.getElementById(id).addEventListener('input', (ev) => {
+    const r = roomById(selId); if (!r) return;
+    if (ev.target.value) r[key] = ev.target.value; else delete r[key];
+    persist(); render();
+    document.getElementById(id).focus();
+  });
+}
+document.getElementById('pOutline').addEventListener('change', (ev) => {
+  const r = roomById(selId); if (!r) return;
+  if (ev.target.checked) r.outline = true; else delete r.outline;
+  persist(); render();
+});
+document.getElementById('pHideLabel').addEventListener('change', (ev) => {
+  const r = roomById(selId); if (!r) return;
+  if (ev.target.checked) r.show_label = false; else delete r.show_label;
+  persist(); render();
+});
+document.getElementById('pDelete').onclick = () => selId && deleteRoom(selId);
+document.getElementById('cw').addEventListener('change', (ev) => { floor().canvas[0] = +ev.target.value || 100; persist(); render(); });
+document.getElementById('ch').addEventListener('change', (ev) => { floor().canvas[1] = +ev.target.value || 100; persist(); render(); });
+
+document.getElementById('bgfile').addEventListener('change', (ev) => {
+  const file = ev.target.files[0]; if (!file) return;
+  const rd = new FileReader();
+  rd.onload = () => { bgImages[floor().key] = rd.result; render(); };
+  rd.readAsDataURL(file);
+});
+document.getElementById('bgop').addEventListener('input', render);
+
+// ---------- project save/load ----------
+document.getElementById('saveProj').onclick = () => {
+  const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'grundriss-projekt.json';
+  a.click();
+};
+document.getElementById('loadProj').addEventListener('change', (ev) => {
+  const file = ev.target.files[0]; if (!file) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    try { project = JSON.parse(rd.result); selId = null; persist(); render(); }
+    catch (e) { alert('Ungültige Projektdatei: ' + e.message); }
+  };
+  rd.readAsText(file);
+});
+
+// ---------- YAML export ----------
+function yq(s) { return `'${String(s).replace(/'/g, "''")}'`; }
+function roomYaml(r) {
+  const parts = [`id: ${r.id}`, `name: ${yq(r.name || r.id)}`];
+  if (r.rect) parts.push(`rect: [${r.rect.join(', ')}]`);
+  else parts.push(`polygon: [${r.polygon.map((p) => `[${p.join(', ')}]`).join(', ')}]`);
+  if (r.entity) parts.push(`entity: ${r.entity}`);
+  if (r.show_label === false) parts.push('show_label: false');
+  if (r.outline) parts.push('outline: true');
+  if (r.label) parts.push(`label: [${r.label.map(Math.round).join(', ')}]`);
+  return `  - {${parts.join(', ')}}`;
+}
+document.getElementById('exportBtn').onclick = () => {
+  const f = floor();
+  const yaml = [
+    'type: custom:floorplan-temp-card',
+    `title: ${yq(f.title)}`,
+    `canvas: [${f.canvas.join(', ')}]`,
+    'color_mode: thresholds',
+    'delta_hours: 1',
+    'rooms:',
+    ...f.rooms.map(roomYaml),
+  ].join('\n');
+  document.getElementById('yamlOut').value = yaml;
+  document.getElementById('dlg').showModal();
+};
+document.getElementById('copyYaml').onclick = async () => {
+  await navigator.clipboard.writeText(document.getElementById('yamlOut').value);
+  document.getElementById('copyYaml').textContent = '✓ Kopiert';
+  setTimeout(() => (document.getElementById('copyYaml').textContent = 'In Zwischenablage kopieren'), 1500);
+};
+
+window.addEventListener('resize', render);
+render();
+</script>
+</body>
+</html>

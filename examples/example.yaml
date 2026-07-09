@@ -1,0 +1,12 @@
+# Example: small apartment, thresholds mode
+type: custom:floorplan-temp-card
+title: Apartment
+canvas: [600, 460]
+color_mode: thresholds
+delta_hours: 1
+rooms:
+  - {id: living, name: Living room, rect: [20, 20, 340, 260], entity: sensor.living_temp}
+  - {id: bed, name: Bedroom, rect: [380, 20, 200, 180], entity: sensor.bedroom_temp}
+  - {id: bath, name: Bath, rect: [380, 220, 200, 120], entity: sensor.bath_temp}
+  - {id: hall, name: Hall, rect: [20, 300, 340, 140]}
+  - {id: balcony, name: Balcony, rect: [380, 360, 200, 80], outline: true}
