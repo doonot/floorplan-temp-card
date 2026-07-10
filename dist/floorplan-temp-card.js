@@ -5,7 +5,7 @@
  * No dependencies, no build step. MIT.
  */
 
-const VERSION = '0.8.1';
+const VERSION = '0.9.0';
 
 // Device icons placed on the plan (24×24 mdi paths)
 const DEVICE_ICONS = {
@@ -76,18 +76,20 @@ function mixHsl(c1, c2, t) {
 // Derive a designed pair from one accent color. Light mode: soft pastel fill +
 // deep value color. Dark mode: a muted deep-toned fill (like amber-brown for
 // warm rooms) + a bright value color that reads on near-black.
-function shades([h, s], dark) {
+function shades([h, s], dark, lit) {
   const H = Math.round(h * 360);
   if (dark) {
     // muted deep fills (mock: warm brown ~hsl(38,43%,16%)) + strong warm value
-    // colors — pastel/green reads wrong on near-black.
+    // colors — pastel/green reads wrong on near-black. Lit rooms glow brighter.
     return {
-      fill: `hsl(${H},${Math.round(Math.min(1, s * 0.42) * 100)}%,15%)`,
-      text: `hsl(${H},65%,60%)`,
+      fill: lit
+        ? `hsl(${H},${Math.round(Math.min(1, s * 0.52) * 100)}%,24%)`
+        : `hsl(${H},${Math.round(Math.min(1, s * 0.42) * 100)}%,15%)`,
+      text: `hsl(${H},65%,${lit ? 66 : 60}%)`,
     };
   }
   return {
-    fill: `hsl(${H},${Math.round(Math.min(1, s * 0.85) * 100)}%,88%)`,
+    fill: `hsl(${H},${Math.round(Math.min(1, s * 0.85) * 100)}%,${lit ? 84 : 88}%)`,
     text: `hsl(${H},${Math.round(Math.min(1, s * 0.8) * 100)}%,34%)`,
   };
 }
@@ -150,6 +152,19 @@ function rectUnionLoops(rects) {
     if (simp.length >= 3) loops.push(simp);
   }
   return loops;
+}
+
+// Even-odd point-in-polygon across all loops of a room (matches the rendering).
+function pointInLoops(pt, loops) {
+  let inside = false;
+  for (const loop of loops) {
+    for (let i = 0, j = loop.length - 1; i < loop.length; j = i++) {
+      const [xi, yi] = loop[i], [xj, yj] = loop[j];
+      if ((yi > pt[1]) !== (yj > pt[1])
+        && pt[0] < ((xj - xi) * (pt[1] - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+  }
+  return inside;
 }
 
 function roomLoops(room) {
@@ -335,6 +350,8 @@ class FloorplanTempCard extends HTMLElement {
       .wall { stroke: ${c.wall_color || 'var(--primary-text-color, #2b3542)'}; stroke-width: 2.5;
               stroke-linejoin: miter; opacity: 0.85; }
       .neutral { fill: var(--fp-neutral); }
+      .neutral.lit { fill: #f3ecd9; }
+      .dark .neutral.lit { fill: #272f42; }
       .outline { fill: none; stroke: var(--secondary-text-color, #9aa7b4);
                  stroke-width: 2; stroke-dasharray: 7 6; opacity: 0.9; }
       text { font-family: var(--paper-font-body1_-_font-family, -apple-system, 'Segoe UI', Roboto, sans-serif);
@@ -386,6 +403,8 @@ class FloorplanTempCard extends HTMLElement {
       .device.moving .device-bg { animation: fp-livepulse 1.2s ease-in-out infinite; }
       .device.unavail { opacity: 0.4; }
       .device.unavail .device-bg { stroke-dasharray: 3 3; }
+      .light-glow { pointer-events: none; transition: opacity 0.6s ease; }
+      path.wall, path.wall.neutral { transition: fill 0.5s ease; }
       /* covers drawn as real blinds: a bar along the window, filled by closed fraction */
       .cover-border { stroke: #7d8b9d; stroke-linecap: round; }
       .cover-track { stroke: #f2f5f9; stroke-linecap: round; }
@@ -493,8 +512,25 @@ class FloorplanTempCard extends HTMLElement {
         g.addEventListener('click', () => this._openMoreInfo(room.entity));
       }
       svg.appendChild(g);
-      this._refs.set(room.id, { room, shape, valueText, deltaText, liveIcon });
+      this._refs.set(room.id, { room, shape, valueText, deltaText, liveIcon, loops, lightIds: [] });
     }
+
+    // warm glow under the device icons for lights that are on
+    const defs = svgEl('defs');
+    const grad = svgEl('radialGradient', { id: 'fp-glow' });
+    grad.appendChild(svgEl('stop', { offset: '0%', 'stop-color': '#f7c948', 'stop-opacity': '0.45' }));
+    grad.appendChild(svgEl('stop', { offset: '55%', 'stop-color': '#f0b429', 'stop-opacity': '0.16' }));
+    grad.appendChild(svgEl('stop', { offset: '100%', 'stop-color': '#f0b429', 'stop-opacity': '0' }));
+    defs.appendChild(grad);
+    // per-room clip paths so the glow stays inside the room
+    for (const [id, ref] of this._refs) {
+      const cp = svgEl('clipPath', { id: `fp-clip-${id}` });
+      cp.appendChild(svgEl('path', { d: loopsToPath(ref.loops), 'clip-rule': 'evenodd' }));
+      defs.appendChild(cp);
+    }
+    svg.appendChild(defs);
+    const glowLayer = svgEl('g');
+    svg.appendChild(glowLayer);
 
     // devices on top of the rooms
     this._devRefs = [];
@@ -527,7 +563,23 @@ class FloorplanTempCard extends HTMLElement {
       tip.textContent = dev.name || dev.entity;
       g.appendChild(tip);
       g.appendChild(svgEl('circle', { r: devR + 16, class: 'device-hit' }));
-      let ring = null;
+      let ring = null, glow = null;
+      if (dev.type === 'light') {
+        // room lights up: soft radial glow + the containing room brightens
+        glow = svgEl('circle', {
+          cx: dev.at[0], cy: dev.at[1], r: devR * 5.5, class: 'light-glow',
+          fill: 'url(#fp-glow)',
+        });
+        glow.style.opacity = '0';
+        glowLayer.appendChild(glow);
+        for (const [roomId, ref] of this._refs) {
+          if (pointInLoops(dev.at, ref.loops)) {
+            ref.lightIds.push(dev.entity);
+            glow.setAttribute('clip-path', `url(#fp-clip-${roomId})`);
+            break;
+          }
+        }
+      }
       if (dev.type === 'light') {
         // brightness ring, starts at 12 o'clock; doubles as live preview while dimming
         ring = svgEl('circle', { r: devR + 5, class: 'dim-ring', transform: 'rotate(-90)' });
@@ -548,7 +600,7 @@ class FloorplanTempCard extends HTMLElement {
         ring.style.display = pct > 0 ? '' : 'none';
         ring.setAttribute('stroke-dasharray', `${(ringC * pct) / 100} ${ringC}`);
       };
-      this._devRefs.push({ dev, g, setRing });
+      this._devRefs.push({ dev, g, setRing, glow });
       let pressTimer = null, longPressed = false, moved = false, dimming = false;
       let startY = 0, startPct = 0, lastSent = 0;
       g.addEventListener('pointerdown', (ev) => {
@@ -612,18 +664,18 @@ class FloorplanTempCard extends HTMLElement {
 
   // ---------- state → color/labels ----------
 
-  _shadesFor(temp) {
+  _shadesFor(temp, lit) {
     const c = this._config;
     if (c.color_mode === 'gradient') {
       const g = c.gradient;
       const t = Math.min(1, Math.max(0, (temp - g.min) / (g.max - g.min)));
-      return shades(mixHsl(g.min_color, g.max_color, t), this._isDark);
+      return shades(mixHsl(g.min_color, g.max_color, t), this._isDark, lit);
     }
     let color = c.thresholds[c.thresholds.length - 1].color;
     for (const th of c.thresholds) {
       if (th.below === undefined || temp < th.below) { color = th.color; break; }
     }
-    return shades(rgbToHsl(hexToRgb(color)), this._isDark);
+    return shades(rgbToHsl(hexToRgb(color)), this._isDark, lit);
   }
 
   _fmt(n, digits = 1) {
@@ -636,7 +688,7 @@ class FloorplanTempCard extends HTMLElement {
 
   _updateAll() {
     if (!this._hass || !this._config) return;
-    for (const { dev, g, fill, setRing } of this._devRefs || []) {
+    for (const { dev, g, fill, setRing, glow } of this._devRefs || []) {
       const st = this._hass.states[dev.entity];
       const s = st ? st.state : 'unavailable';
       g.classList.toggle('unavail', s === 'unavailable' || s === 'unknown');
@@ -644,6 +696,7 @@ class FloorplanTempCard extends HTMLElement {
         setRing(s === 'on' && st.attributes && st.attributes.brightness
           ? Math.round(st.attributes.brightness / 2.55) : 0);
       }
+      if (glow) glow.style.opacity = s === 'on' ? '1' : '0';
       if (dev.type === 'cover') {
         g.classList.toggle('closed', s === 'closed');
         g.classList.toggle('moving', s === 'opening' || s === 'closing');
@@ -662,7 +715,12 @@ class FloorplanTempCard extends HTMLElement {
         g.classList.toggle('on', s === 'on');
       }
     }
-    for (const { room, shape, valueText, deltaText, liveIcon } of this._refs.values()) {
+    for (const { room, shape, valueText, deltaText, liveIcon, lightIds } of this._refs.values()) {
+      const lit = (lightIds || []).some((e) => {
+        const ls = this._hass.states[e];
+        return ls && ls.state === 'on';
+      });
+      shape.classList.toggle('lit', lit); // brightens rooms without a sensor via CSS
       if (!room.entity || room.outline) continue;
       const st = this._hass.states[room.entity];
       const temp = st ? parseFloat(st.state) : NaN;
@@ -672,7 +730,7 @@ class FloorplanTempCard extends HTMLElement {
       }
       const isLive = room.entity.split('.')[0] === 'sensor';
       if (Number.isFinite(temp)) {
-        const sh = this._shadesFor(temp);
+        const sh = this._shadesFor(temp, lit);
         shape.setAttribute('fill', sh.fill);
         if (valueText) {
           valueText.textContent = this._fmt(temp) + this._config.unit;
