@@ -5,7 +5,14 @@
  * No dependencies, no build step. MIT.
  */
 
-const VERSION = '0.5.2';
+const VERSION = '0.6.0';
+
+// Device icons placed on the plan (24×24 mdi paths)
+const DEVICE_ICONS = {
+  light: 'M12,2A7,7 0 0,0 5,9C5,11.38 6.19,13.47 8,14.74V17A1,1 0 0,0 9,18H15A1,1 0 0,0 16,17V14.74C17.81,13.47 19,11.38 19,9A7,7 0 0,0 12,2M9,21A1,1 0 0,0 10,22H14A1,1 0 0,0 15,21V20H9V21Z',
+  cover: 'M3,4H21V8H19V20H17V8H7V20H5V8H3V4M8,9H16V11H8V9M8,12H16V14H8V12M8,15H16V17H8V15M8,18H16V20H8V18Z',
+  switch: 'M16,7V3H14V7H10V3H8V7C8,7 7,8 7,9V14.5L10.5,18V21H13.5V18L17,14.5V9C17,8 16,7 16,7Z',
+};
 
 // Live badge next to the room name when the entity is a real sensor (domain
 // "sensor"): a dot with two radio waves that pulse outward in sequence.
@@ -196,6 +203,15 @@ class FloorplanTempCard extends HTMLElement {
         throw new Error(`floorplan-temp-card: room "${r.id}" needs rect:[x,y,w,h], rects:[[x,y,w,h],...] or polygon:[[x,y],...]`);
       }
     }
+    if (config.devices !== undefined) {
+      if (!Array.isArray(config.devices)) throw new Error('floorplan-temp-card: "devices" must be a list');
+      for (const dv of config.devices) {
+        if (!['light', 'cover', 'switch'].includes(dv.type) || !dv.entity
+          || !Array.isArray(dv.at) || dv.at.length !== 2) {
+          throw new Error('floorplan-temp-card: every device needs type (light/cover/switch), entity and at:[x,y]');
+        }
+      }
+    }
     const mode = config.color_mode || 'thresholds';
     if (!['thresholds', 'gradient'].includes(mode)) {
       throw new Error('floorplan-temp-card: color_mode must be "thresholds" or "gradient"');
@@ -217,6 +233,7 @@ class FloorplanTempCard extends HTMLElement {
       wall_color: config.wall_color,
       title: config.title,
       rooms: config.rooms,
+      devices: config.devices || [],
     };
     this._lastDeltaFetch = 0;
     this._deltas.clear();
@@ -304,6 +321,20 @@ class FloorplanTempCard extends HTMLElement {
       @media (prefers-reduced-motion: reduce) {
         .live-icon .w1, .live-icon .w2, .room-value.live { animation: none; }
       }
+      /* devices (lights, covers, sockets) placed on the plan */
+      .device { cursor: pointer; }
+      .device .device-bg {
+        fill: var(--card-background-color, #fff); stroke: var(--divider-color, #d5dbe2);
+        stroke-width: 1.5; filter: drop-shadow(0 1px 2px rgba(16, 24, 40, 0.18));
+      }
+      .device .device-icon { fill: var(--secondary-text-color, #8a94a0); pointer-events: none; }
+      .device.on .device-bg { fill: #f7c948; stroke: #e0a80c; }
+      .device.on .device-icon { fill: #6b4e00; }
+      .device.cover.closed .device-bg { fill: #46566b; stroke: #2b3542; }
+      .device.cover.closed .device-icon { fill: #e8edf4; }
+      .device.moving .device-bg { animation: fp-livepulse 1.2s ease-in-out infinite; }
+      .device.unavail { opacity: 0.4; }
+      .device.unavail .device-bg { stroke-dasharray: 3 3; }
     `;
     this.shadowRoot.appendChild(style);
 
@@ -376,6 +407,44 @@ class FloorplanTempCard extends HTMLElement {
       this._refs.set(room.id, { room, shape, valueText, deltaText, liveIcon });
     }
 
+    // devices on top of the rooms
+    this._devRefs = [];
+    const devR = Math.max(11, w * 0.021);
+    for (const dev of c.devices) {
+      const g = svgEl('g', {
+        class: `device ${dev.type}`,
+        transform: `translate(${dev.at[0]}, ${dev.at[1]})`,
+      });
+      const tip = svgEl('title');
+      tip.textContent = dev.name || dev.entity;
+      g.appendChild(tip);
+      g.appendChild(svgEl('circle', { r: devR, class: 'device-bg' }));
+      const is = (devR * 1.35) / 24;
+      g.appendChild(svgEl('path', {
+        d: DEVICE_ICONS[dev.type],
+        transform: `translate(${-12 * is}, ${-12 * is}) scale(${is})`,
+        class: 'device-icon',
+      }));
+      // lights/switches: tap toggles, long-press opens more-info; covers: tap opens more-info
+      let pressTimer = null, longPressed = false;
+      g.addEventListener('pointerdown', () => {
+        longPressed = false;
+        pressTimer = setTimeout(() => { longPressed = true; this._openMoreInfo(dev.entity); }, 550);
+      });
+      const cancel = () => clearTimeout(pressTimer);
+      g.addEventListener('pointerleave', cancel);
+      g.addEventListener('pointercancel', cancel);
+      g.addEventListener('pointerup', () => {
+        cancel();
+        if (longPressed) return;
+        if (dev.type === 'cover') this._openMoreInfo(dev.entity);
+        else this._hass && this._hass.callService(dev.type, 'toggle', { entity_id: dev.entity });
+      });
+      g.addEventListener('click', (ev) => ev.stopPropagation()); // don't trigger the room below
+      svg.appendChild(g);
+      this._devRefs.push({ dev, g });
+    }
+
     card.appendChild(svg);
     this.shadowRoot.appendChild(card);
 
@@ -419,6 +488,17 @@ class FloorplanTempCard extends HTMLElement {
 
   _updateAll() {
     if (!this._hass || !this._config) return;
+    for (const { dev, g } of this._devRefs || []) {
+      const st = this._hass.states[dev.entity];
+      const s = st ? st.state : 'unavailable';
+      g.classList.toggle('unavail', s === 'unavailable' || s === 'unknown');
+      if (dev.type === 'cover') {
+        g.classList.toggle('closed', s === 'closed');
+        g.classList.toggle('moving', s === 'opening' || s === 'closing');
+      } else {
+        g.classList.toggle('on', s === 'on');
+      }
+    }
     for (const { room, shape, valueText, deltaText, liveIcon } of this._refs.values()) {
       if (!room.entity || room.outline) continue;
       const st = this._hass.states[room.entity];

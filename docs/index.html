@@ -54,17 +54,23 @@
   .lhandle{fill:var(--sel);opacity:.85;cursor:grab}
   .draft{fill:rgba(23,184,144,.15);stroke:var(--accent);stroke-width:2;stroke-dasharray:5 4}
   .subdiv{fill:none;stroke:var(--sel);stroke-width:1;stroke-dasharray:3 3;opacity:.5;pointer-events:none}
+  .device-bg{fill:#fff;stroke:#c6cfda;stroke-width:1.5;cursor:move}
+  .device-bg.dsel{stroke:var(--sel);stroke-width:3}
+  .device-icon{fill:#8a94a0;pointer-events:none}
   #bgimg{pointer-events:none}
 </style>
 </head>
 <body>
 <header>
-  <h1>🏠 Grundriss-Editor <small style="font-size:11px;font-weight:400;opacity:.55">v0.4.0</small></h1>
+  <h1>🏠 Grundriss-Editor <small style="font-size:11px;font-weight:400;opacity:.55">v0.6.0</small></h1>
   <div class="tabs" id="tabs"></div>
   <div class="tools">
     <button class="tool on" data-tool="select" title="Auswählen/Verschieben (V)">✥ Auswahl</button>
     <button class="tool" data-tool="rect" title="Rechteck ziehen (R)">▭ Raum</button>
     <button class="tool" data-tool="poly" title="Polygon klicken, Enter schließt (P)">⬠ Polygon</button>
+    <button class="tool" data-tool="light" title="Licht platzieren (L)">💡 Licht</button>
+    <button class="tool" data-tool="cover" title="Store/Markise platzieren (S)">▤ Store</button>
+    <button class="tool" data-tool="switch" title="Steckdose platzieren">🔌 Dose</button>
   </div>
   <div class="sp"></div>
   <button class="act" id="bgfileBtn" title="Grundriss-Plan (Foto/Scan) als Zeichenvorlage hinterlegen — bleibt lokal">🖼 Plan-Bild laden…</button>
@@ -96,6 +102,14 @@
       <button class="act" id="pSplit" hidden>Flächen trennen</button>
       <button class="act" id="pDelete" style="color:#c22">Raum löschen</button>
     </div>
+    <div id="dprops" hidden>
+      <h2>Ausgewähltes Gerät <span id="dType" style="font-weight:400"></span></h2>
+      <div class="field"><label>Entity (light.* / cover.* / switch.*)</label>
+        <input type="text" id="dEntity" placeholder="light.licht_eg_entree_spots"></div>
+      <div class="field"><label>Name (Tooltip, optional)</label><input type="text" id="dName"></div>
+      <div class="hint">Verschieben: ziehen · Löschen: ⌫</div>
+      <button class="act" id="dDelete" style="color:#c22">Gerät löschen</button>
+    </div>
     <div id="multi" hidden>
       <h2>Mehrfachauswahl</h2>
       <div class="hint" id="multiHint"></div>
@@ -107,6 +121,7 @@
       2. Mit ▭ Räume über die Zimmer ziehen (Raster 5 px).<br>
       3. Raum anklicken → Name + Sensor-Entity zuweisen.<br>
       3b. L-/T-förmige Räume: mehrere Rechtecke zeichnen, mit <b>Shift-Klick</b> zusammen auswählen → „Zu einer Fläche vereinen". Trennen jederzeit über „Flächen trennen".<br>
+      3c. 💡/▤/🔌: Lichter, Storen und Steckdosen aufs Bild setzen (L/S), Entity zuweisen. In der Karte: Licht-Tap schaltet, lang drücken = Details; Store-Tap öffnet die Steuerung.<br>
       4. „YAML exportieren" → Config in HA einfügen (<code>custom:floorplan-temp-card</code>).<br>
       Projekt wird automatisch im Browser gespeichert.</div>
   </aside>
@@ -143,11 +158,19 @@ try {
 let tool = 'select';
 let selId = null;   // genau ein Raum ausgewählt (Eigenschaften-Panel)
 let selIds = [];    // volle Auswahl (Shift-Klick = Mehrfachauswahl zum Vereinen)
-function setSel(ids) { selIds = ids; selId = ids.length === 1 ? ids[0] : null; }
+function setSel(ids) { selIds = ids; selId = ids.length === 1 ? ids[0] : null; if (ids.length) devSel = null; }
 function toggleSel(id, additive) {
   if (!additive) return setSel([id]);
   setSel(selIds.includes(id) ? selIds.filter((x) => x !== id) : [...selIds, id]);
 }
+let devSel = null; // ausgewähltes Gerät (schließt Raum-Auswahl aus)
+const DEVICE_ICONS = {
+  light: 'M12,2A7,7 0 0,0 5,9C5,11.38 6.19,13.47 8,14.74V17A1,1 0 0,0 9,18H15A1,1 0 0,0 16,17V14.74C17.81,13.47 19,11.38 19,9A7,7 0 0,0 12,2M9,21A1,1 0 0,0 10,22H14A1,1 0 0,0 15,21V20H9V21Z',
+  cover: 'M3,4H21V8H19V20H17V8H7V20H5V8H3V4M8,9H16V11H8V9M8,12H16V14H8V12M8,15H16V17H8V15M8,18H16V20H8V18Z',
+  switch: 'M16,7V3H14V7H10V3H8V7C8,7 7,8 7,9V14.5L10.5,18V21H13.5V18L17,14.5V9C17,8 16,7 16,7Z',
+};
+const devices = () => (floor().devices = floor().devices || []);
+const devById = (id) => devices().find((d) => d.id === id);
 let bgImages = {}; // floorKey -> dataURL (session only, never exported)
 let draft = null;  // {x0,y0,x1,y1} while dragging rect, or {points:[]} for poly
 let drag = null;   // move/resize/vertex/label drag state
@@ -306,6 +329,15 @@ function render() {
     }
   }
 
+  for (const dv of devices()) {
+    const g = el('g', { transform: `translate(${dv.at[0]}, ${dv.at[1]})` });
+    const bg = el('circle', { r: 13, class: 'device-bg' + (dv.id === devSel ? ' dsel' : ''), 'data-dev': dv.id });
+    g.appendChild(bg);
+    const is = 0.75;
+    g.appendChild(el('path', { d: DEVICE_ICONS[dv.type], transform: `translate(${-12 * is}, ${-12 * is}) scale(${is})`, class: 'device-icon' }));
+    svg.appendChild(g);
+  }
+
   if (draft) {
     if (draft.points) {
       const d = el('polyline', { points: draft.points.concat([draft.cursor || draft.points[draft.points.length - 1]]).map((p) => p.join(',')).join(' '), class: 'draft' });
@@ -341,6 +373,14 @@ function renderSidebar() {
     document.getElementById('pOutline').checked = !!r.outline;
     document.getElementById('pHideLabel').checked = r.show_label === false;
     document.getElementById('pSplit').hidden = !r.rects;
+  }
+  const dprops = document.getElementById('dprops');
+  const dv = devById(devSel);
+  dprops.hidden = !dv;
+  if (dv) {
+    document.getElementById('dType').textContent = { light: '· Licht', cover: '· Store', switch: '· Steckdose' }[dv.type] || '';
+    document.getElementById('dEntity').value = dv.entity || '';
+    document.getElementById('dName').value = dv.name || '';
   }
   const multi = document.getElementById('multi');
   multi.hidden = selIds.length < 2;
@@ -384,7 +424,26 @@ svg.addEventListener('pointerdown', (ev) => {
     render();
     return;
   }
-  // select tool
+  if (tool === 'light' || tool === 'cover' || tool === 'switch') {
+    let n = devices().length + 1;
+    let id = 'dev-' + n;
+    while (devById(id)) id = 'dev-' + ++n;
+    devices().push({ id, type: tool, at: [x, y] });
+    setSel([]); devSel = id;
+    setTool('select');
+    persist();
+    render();
+    return;
+  }
+  // select tool — devices first (they sit on top)
+  const devId = ev.target.getAttribute && ev.target.getAttribute('data-dev');
+  if (devId) {
+    setSel([]); devSel = devId;
+    drag = { type: 'device', start: [x, y], orig: JSON.parse(JSON.stringify(devById(devId))) };
+    svg.setPointerCapture(ev.pointerId);
+    render();
+    return;
+  }
   if (h && r) {
     drag = { type: h, start: [x, y], orig: JSON.parse(JSON.stringify(r)) };
     svg.setPointerCapture(ev.pointerId);
@@ -411,6 +470,11 @@ svg.addEventListener('pointermove', (ev) => {
   if (draft && !draft.points) { draft.x1 = x; draft.y1 = y; render(); return; }
   if (draft && draft.points) { draft.cursor = [x, y]; render(); return; }
   if (!drag) return;
+  if (drag.type === 'device') {
+    const dv = devById(devSel);
+    if (dv) { dv.at = [x, y]; render(); }
+    return;
+  }
   const r = roomById(selId);
   if (!r) return;
   const dx = x - drag.start[0], dy = y - drag.start[1];
@@ -462,10 +526,13 @@ window.addEventListener('keydown', (ev) => {
   if (ev.target.tagName === 'INPUT' || ev.target.tagName === 'TEXTAREA') return;
   if (ev.key === 'Enter') finishPoly();
   if (ev.key === 'Escape') { draft = null; setSel([]); render(); }
+  if ((ev.key === 'Backspace' || ev.key === 'Delete') && devSel) { deleteDevice(devSel); return; }
   if ((ev.key === 'Backspace' || ev.key === 'Delete') && selId) { deleteRoom(selId); }
   if (ev.key === 'v') setTool('select');
   if (ev.key === 'r') setTool('rect');
   if (ev.key === 'p') setTool('poly');
+  if (ev.key === 'l') setTool('light');
+  if (ev.key === 's') setTool('cover');
 });
 
 function finishPoly() {
@@ -538,6 +605,22 @@ function splitRoom() {
 }
 document.getElementById('pMerge').onclick = mergeSelected;
 document.getElementById('pSplit').onclick = splitRoom;
+
+// ---------- device panel ----------
+function deleteDevice(id) {
+  floor().devices = devices().filter((d) => d.id !== id);
+  if (devSel === id) devSel = null;
+  persist();
+  render();
+}
+document.getElementById('dDelete').onclick = () => devSel && deleteDevice(devSel);
+for (const [id, key] of [['dEntity', 'entity'], ['dName', 'name']]) {
+  document.getElementById(id).addEventListener('input', (ev) => {
+    const dv = devById(devSel); if (!dv) return;
+    if (ev.target.value) dv[key] = ev.target.value; else delete dv[key];
+    persist();
+  });
+}
 
 // ---------- toolbar / panel wiring ----------
 function setTool(t) {
@@ -632,6 +715,11 @@ function roomYaml(r) {
   if (r.label) parts.push(`label: [${r.label.map(Math.round).join(', ')}]`);
   return `  - {${parts.join(', ')}}`;
 }
+function deviceYaml(d) {
+  const parts = [`type: ${d.type}`, `entity: ${d.entity || 'TODO'}`, `at: [${d.at.map(Math.round).join(', ')}]`];
+  if (d.name) parts.push(`name: ${yq(d.name)}`);
+  return `  - {${parts.join(', ')}}`;
+}
 document.getElementById('exportBtn').onclick = () => {
   const f = floor();
   const yaml = [
@@ -642,6 +730,7 @@ document.getElementById('exportBtn').onclick = () => {
     'delta_hours: 1',
     'rooms:',
     ...f.rooms.map(roomYaml),
+    ...(f.devices && f.devices.length ? ['devices:', ...f.devices.map(deviceYaml)] : []),
   ].join('\n');
   document.getElementById('yamlOut').value = yaml;
   document.getElementById('dlg').showModal();
