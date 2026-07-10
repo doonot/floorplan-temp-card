@@ -5,7 +5,7 @@
  * No dependencies, no build step. MIT.
  */
 
-const VERSION = '0.8.0';
+const VERSION = '0.8.1';
 
 // Device icons placed on the plan (24×24 mdi paths)
 const DEVICE_ICONS = {
@@ -79,9 +79,11 @@ function mixHsl(c1, c2, t) {
 function shades([h, s], dark) {
   const H = Math.round(h * 360);
   if (dark) {
+    // muted deep fills (mock: warm brown ~hsl(38,43%,16%)) + strong warm value
+    // colors — pastel/green reads wrong on near-black.
     return {
-      fill: `hsl(${H},${Math.round(Math.min(1, s * 0.55) * 100)}%,17%)`,
-      text: `hsl(${H},${Math.round(Math.min(1, s * 0.9) * 100)}%,62%)`,
+      fill: `hsl(${H},${Math.round(Math.min(1, s * 0.42) * 100)}%,15%)`,
+      text: `hsl(${H},65%,60%)`,
     };
   }
   return {
@@ -299,12 +301,12 @@ class FloorplanTempCard extends HTMLElement {
     style.textContent = `
       ha-card { overflow: hidden; --fp-neutral: var(--secondary-background-color, #eef1f4); }
       /* dark appearance: near-black panel, light wall lines, deep-toned room fills */
-      ha-card.dark { --fp-neutral: #1c2432; background: #10161f; }
+      ha-card.dark { --fp-neutral: #182031; background: #111826; }
       .dark .title { color: #e6ecf3; }
       .dark .wall { stroke: #93a7c0; }
       .dark .room-name { fill: #94a1b0; }
       .dark .outline { stroke: #5d6c80; }
-      .dark .room-value.live { fill: hsl(158, 45%, 58%) !important; }
+      .dark .delta-up { fill: #c87f5e; }
       .dark .delta-down { fill: #6ba6e8; }
       .dark .device .device-bg { fill: #223046; stroke: #3c4a61; }
       .dark .device .device-icon { fill: #aab6c5; }
@@ -351,11 +353,10 @@ class FloorplanTempCard extends HTMLElement {
       .live-icon .w2 { animation-delay: 0.4s; }
       .live-icon.off { color: var(--secondary-text-color, #9aa7b4); }
       .live-icon.off .w1, .live-icon.off .w2 { animation: none; opacity: 0.45; }
-      /* live sensor: value in green, breathing gently in sync with the waves */
-      .room-value.live {
-        fill: hsl(158, 55%, 32%) !important;
-        animation: fp-livepulse 2.4s ease-in-out infinite;
-      }
+      /* live sensor: gentle breathing; green tint only in light mode (on dark
+         the warm per-threshold value colors stay) */
+      .room-value.live { fill: hsl(158, 55%, 32%) !important; }
+      .room-value.pulse { animation: fp-livepulse 2.4s ease-in-out infinite; }
       @keyframes fp-livewave {
         0%, 70%, 100% { opacity: 0.25; }
         20%, 45% { opacity: 1; }
@@ -365,7 +366,7 @@ class FloorplanTempCard extends HTMLElement {
         45% { opacity: 0.62; }
       }
       @media (prefers-reduced-motion: reduce) {
-        .live-icon .w1, .live-icon .w2, .room-value.live { animation: none; }
+        .live-icon .w1, .live-icon .w2, .room-value.pulse { animation: none; }
       }
       /* devices (lights, covers, sockets) placed on the plan */
       .device { cursor: pointer; touch-action: none; }
@@ -676,11 +677,12 @@ class FloorplanTempCard extends HTMLElement {
         if (valueText) {
           valueText.textContent = this._fmt(temp) + this._config.unit;
           valueText.style.fill = sh.text; // inline style wins over the class fill
-          valueText.classList.toggle('live', isLive); // .live (!important) wins over both
+          valueText.classList.toggle('live', isLive && !this._isDark); // green tint (light mode only)
+          valueText.classList.toggle('pulse', isLive);
         }
       } else {
         shape.setAttribute('fill', 'var(--fp-neutral)');
-        if (valueText) { valueText.textContent = '–'; valueText.style.fill = ''; valueText.classList.remove('live'); }
+        if (valueText) { valueText.textContent = '–'; valueText.style.fill = ''; valueText.classList.remove('live', 'pulse'); }
       }
       if (deltaText) {
         const d = this._deltas.get(room.entity);
