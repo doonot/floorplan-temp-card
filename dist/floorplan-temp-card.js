@@ -5,7 +5,7 @@
  * No dependencies, no build step. MIT.
  */
 
-const VERSION = '0.7.1';
+const VERSION = '0.8.0';
 
 // Device icons placed on the plan (24×24 mdi paths)
 const DEVICE_ICONS = {
@@ -73,10 +73,17 @@ function mixHsl(c1, c2, t) {
   return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
 }
 
-// Derive a designed pair from one accent color: a soft pastel room fill and a
-// deeper, saturated tone for the value text — instead of alpha-washed fills.
-function shades([h, s]) {
+// Derive a designed pair from one accent color. Light mode: soft pastel fill +
+// deep value color. Dark mode: a muted deep-toned fill (like amber-brown for
+// warm rooms) + a bright value color that reads on near-black.
+function shades([h, s], dark) {
   const H = Math.round(h * 360);
+  if (dark) {
+    return {
+      fill: `hsl(${H},${Math.round(Math.min(1, s * 0.55) * 100)}%,17%)`,
+      text: `hsl(${H},${Math.round(Math.min(1, s * 0.9) * 100)}%,62%)`,
+    };
+  }
   return {
     fill: `hsl(${H},${Math.round(Math.min(1, s * 0.85) * 100)}%,88%)`,
     text: `hsl(${H},${Math.round(Math.min(1, s * 0.8) * 100)}%,34%)`,
@@ -238,6 +245,8 @@ class FloorplanTempCard extends HTMLElement {
       title: config.title,
       rooms: config.rooms,
       devices: config.devices || [],
+      // true | false | 'auto' (follows the HA dark mode)
+      dark: config.dark === undefined ? 'auto' : config.dark,
     };
     this._lastDeltaFetch = 0;
     this._deltas.clear();
@@ -248,6 +257,14 @@ class FloorplanTempCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     if (!this._config) return;
+    const dark = this._config.dark === 'auto'
+      ? !!(hass.themes && hass.themes.darkMode)
+      : !!this._config.dark;
+    if (dark !== this._isDark) {
+      this._isDark = dark;
+      const card = this.shadowRoot.querySelector('ha-card');
+      if (card) card.classList.toggle('dark', dark);
+    }
     this._updateAll();
     const dh = this._config.delta_hours;
     if (dh > 0 && Date.now() - this._lastDeltaFetch > 5 * 60 * 1000) {
@@ -280,17 +297,42 @@ class FloorplanTempCard extends HTMLElement {
     this.shadowRoot.innerHTML = '';
     const style = document.createElement('style');
     style.textContent = `
-      ha-card { overflow: hidden; }
+      ha-card { overflow: hidden; --fp-neutral: var(--secondary-background-color, #eef1f4); }
+      /* dark appearance: near-black panel, light wall lines, deep-toned room fills */
+      ha-card.dark { --fp-neutral: #1c2432; background: #10161f; }
+      .dark .title { color: #e6ecf3; }
+      .dark .wall { stroke: #93a7c0; }
+      .dark .room-name { fill: #94a1b0; }
+      .dark .outline { stroke: #5d6c80; }
+      .dark .room-value.live { fill: hsl(158, 45%, 58%) !important; }
+      .dark .delta-down { fill: #6ba6e8; }
+      .dark .device .device-bg { fill: #223046; stroke: #3c4a61; }
+      .dark .device .device-icon { fill: #aab6c5; }
+      .dark .cover-border { stroke: #61708a; }
+      .dark .cover-track { stroke: #26303f; }
+      .dark .cover-fill { stroke: #a9bdd8; }
+      .header {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 8px; flex-wrap: wrap; padding: 14px 18px 0;
+      }
       .title {
-        padding: 14px 18px 0;
         font-size: 1.15em; font-weight: 700;
         color: var(--primary-text-color);
       }
+      .dark .title { color: #e6ecf3; }
+      .shortcuts { display: flex; gap: 6px; margin-left: auto; }
+      .sc-btn {
+        border: 1px solid var(--divider-color, #d5dbe2); background: transparent;
+        border-radius: 999px; padding: 4px 11px; font: inherit; font-size: 12px;
+        color: var(--secondary-text-color, #6b7480); cursor: pointer; line-height: 1.4;
+      }
+      .sc-btn:active { transform: scale(0.95); }
+      .dark .sc-btn { border-color: #3c4a61; color: #aab6c5; }
       svg { display: block; width: 100%; height: auto; touch-action: manipulation; }
       .room-hit { cursor: pointer; }
       .wall { stroke: ${c.wall_color || 'var(--primary-text-color, #2b3542)'}; stroke-width: 2.5;
               stroke-linejoin: miter; opacity: 0.85; }
-      .neutral { fill: var(--secondary-background-color, #eef1f4); }
+      .neutral { fill: var(--fp-neutral); }
       .outline { fill: none; stroke: var(--secondary-text-color, #9aa7b4);
                  stroke-width: 2; stroke-dasharray: 7 6; opacity: 0.9; }
       text { font-family: var(--paper-font-body1_-_font-family, -apple-system, 'Segoe UI', Roboto, sans-serif);
@@ -326,7 +368,9 @@ class FloorplanTempCard extends HTMLElement {
         .live-icon .w1, .live-icon .w2, .room-value.live { animation: none; }
       }
       /* devices (lights, covers, sockets) placed on the plan */
-      .device { cursor: pointer; }
+      .device { cursor: pointer; touch-action: none; }
+      .dim-ring { fill: none; stroke: #f0b429; stroke-width: 3; stroke-linecap: round;
+                  pointer-events: none; opacity: 0.95; }
       /* big invisible touch target — icons stay elegant, fingers still hit them */
       .device .device-hit { fill: transparent; stroke: none; }
       .device .device-bg {
@@ -351,11 +395,43 @@ class FloorplanTempCard extends HTMLElement {
     this.shadowRoot.appendChild(style);
 
     const card = document.createElement('ha-card');
-    if (c.title) {
-      const t = document.createElement('div');
-      t.className = 'title';
-      t.textContent = c.title;
-      card.appendChild(t);
+    if (this._isDark) card.classList.add('dark');
+    // header: title + per-floor shortcuts (all lights on/off, all covers open/close)
+    const lightIds = [...new Set(c.devices.filter((d) => d.type === 'light').map((d) => d.entity))];
+    const coverIds = [...new Set(c.devices.filter((d) => d.type === 'cover').map((d) => d.entity))];
+    if (c.title || lightIds.length || coverIds.length) {
+      const header = document.createElement('div');
+      header.className = 'header';
+      if (c.title) {
+        const t = document.createElement('div');
+        t.className = 'title';
+        t.textContent = c.title;
+        header.appendChild(t);
+      }
+      const sc = document.createElement('div');
+      sc.className = 'shortcuts';
+      const btn = (label, title, fn) => {
+        const b = document.createElement('button');
+        b.className = 'sc-btn';
+        b.textContent = label;
+        b.title = title;
+        b.addEventListener('click', fn);
+        sc.appendChild(b);
+      };
+      if (lightIds.length) {
+        btn('💡 An', 'Alle Lichter einschalten', () =>
+          this._hass && this._hass.callService('light', 'turn_on', { entity_id: lightIds }));
+        btn('💡 Aus', 'Alle Lichter ausschalten', () =>
+          this._hass && this._hass.callService('light', 'turn_off', { entity_id: lightIds }));
+      }
+      if (coverIds.length) {
+        btn('▲ Auf', 'Alle Storen öffnen', () =>
+          this._hass && this._hass.callService('cover', 'open_cover', { entity_id: coverIds }));
+        btn('▼ Zu', 'Alle Storen schliessen', () =>
+          this._hass && this._hass.callService('cover', 'close_cover', { entity_id: coverIds }));
+      }
+      if (sc.children.length) header.appendChild(sc);
+      card.appendChild(header);
     }
     const pad = 6;
     const svg = svgEl('svg', { viewBox: `${-pad} ${-pad} ${w + 2 * pad} ${h + 2 * pad}` });
@@ -374,7 +450,7 @@ class FloorplanTempCard extends HTMLElement {
       } else {
         shape.setAttribute('class', room.entity ? 'wall' : 'wall neutral');
         // Neutral until the first hass update paints the derived shade.
-        if (room.entity) shape.setAttribute('fill', 'var(--secondary-background-color, #eef1f4)');
+        if (room.entity) shape.setAttribute('fill', 'var(--fp-neutral)');
       }
       g.appendChild(shape);
 
@@ -450,6 +526,13 @@ class FloorplanTempCard extends HTMLElement {
       tip.textContent = dev.name || dev.entity;
       g.appendChild(tip);
       g.appendChild(svgEl('circle', { r: devR + 16, class: 'device-hit' }));
+      let ring = null;
+      if (dev.type === 'light') {
+        // brightness ring, starts at 12 o'clock; doubles as live preview while dimming
+        ring = svgEl('circle', { r: devR + 5, class: 'dim-ring', transform: 'rotate(-90)' });
+        ring.style.display = 'none';
+        g.appendChild(ring);
+      }
       g.appendChild(svgEl('circle', { r: devR, class: 'device-bg' }));
       const is = (devR * 1.35) / 24;
       g.appendChild(svgEl('path', {
@@ -457,24 +540,56 @@ class FloorplanTempCard extends HTMLElement {
         transform: `translate(${-12 * is}, ${-12 * is}) scale(${is})`,
         class: 'device-icon',
       }));
-      // lights/switches: tap toggles, long-press opens more-info; covers: tap opens more-info
-      let pressTimer = null, longPressed = false;
-      g.addEventListener('pointerdown', () => {
-        longPressed = false;
+      // tap = toggle · long-press = more-info · vertical drag on dimmable light = dim
+      const ringC = 2 * Math.PI * (devR + 5);
+      const setRing = (pct) => {
+        if (!ring) return;
+        ring.style.display = pct > 0 ? '' : 'none';
+        ring.setAttribute('stroke-dasharray', `${(ringC * pct) / 100} ${ringC}`);
+      };
+      this._devRefs.push({ dev, g, setRing });
+      let pressTimer = null, longPressed = false, moved = false, dimming = false;
+      let startY = 0, startPct = 0, lastSent = 0;
+      g.addEventListener('pointerdown', (ev) => {
+        longPressed = false; moved = false; dimming = false;
+        startY = ev.clientY;
+        const st = this._hass && this._hass.states[dev.entity];
+        startPct = st && st.attributes && st.attributes.brightness
+          ? Math.round(st.attributes.brightness / 2.55) : 0;
+        try { g.setPointerCapture(ev.pointerId); } catch (e) { /* ok */ }
         pressTimer = setTimeout(() => { longPressed = true; this._openMoreInfo(dev.entity); }, 550);
       });
+      g.addEventListener('pointermove', (ev) => {
+        if (longPressed) return;
+        const dy = ev.clientY - startY;
+        if (!moved && Math.abs(dy) > 7) { moved = true; clearTimeout(pressTimer); }
+        if (!moved || dev.type !== 'light' || !this._hass) return;
+        const st = this._hass.states[dev.entity];
+        const dimmable = st && Array.isArray(st.attributes.supported_color_modes)
+          && st.attributes.supported_color_modes.some((m) => m !== 'onoff');
+        if (!dimmable) return;
+        dimming = true;
+        // ziehen nach oben = heller (~0.55 %/px)
+        this._dimPct = Math.max(0, Math.min(100, Math.round(startPct - dy * 0.55)));
+        setRing(this._dimPct);
+        const now = Date.now();
+        if (now - lastSent > 200) {
+          lastSent = now;
+          this._callDim(dev.entity, this._dimPct);
+        }
+      });
       const cancel = () => clearTimeout(pressTimer);
-      g.addEventListener('pointerleave', cancel);
       g.addEventListener('pointercancel', cancel);
       g.addEventListener('pointerup', () => {
         cancel();
         if (longPressed) return;
+        if (dimming) { this._callDim(dev.entity, this._dimPct); return; }
+        if (moved) return;
         if (dev.type === 'cover') this._openMoreInfo(dev.entity);
         else this._hass && this._hass.callService(dev.type, 'toggle', { entity_id: dev.entity });
       });
       g.addEventListener('click', (ev) => ev.stopPropagation()); // don't trigger the room below
       svg.appendChild(g);
-      this._devRefs.push({ dev, g });
     }
 
     card.appendChild(svg);
@@ -501,13 +616,13 @@ class FloorplanTempCard extends HTMLElement {
     if (c.color_mode === 'gradient') {
       const g = c.gradient;
       const t = Math.min(1, Math.max(0, (temp - g.min) / (g.max - g.min)));
-      return shades(mixHsl(g.min_color, g.max_color, t));
+      return shades(mixHsl(g.min_color, g.max_color, t), this._isDark);
     }
     let color = c.thresholds[c.thresholds.length - 1].color;
     for (const th of c.thresholds) {
       if (th.below === undefined || temp < th.below) { color = th.color; break; }
     }
-    return shades(rgbToHsl(hexToRgb(color)));
+    return shades(rgbToHsl(hexToRgb(color)), this._isDark);
   }
 
   _fmt(n, digits = 1) {
@@ -520,10 +635,14 @@ class FloorplanTempCard extends HTMLElement {
 
   _updateAll() {
     if (!this._hass || !this._config) return;
-    for (const { dev, g, fill } of this._devRefs || []) {
+    for (const { dev, g, fill, setRing } of this._devRefs || []) {
       const st = this._hass.states[dev.entity];
       const s = st ? st.state : 'unavailable';
       g.classList.toggle('unavail', s === 'unavailable' || s === 'unknown');
+      if (setRing) {
+        setRing(s === 'on' && st.attributes && st.attributes.brightness
+          ? Math.round(st.attributes.brightness / 2.55) : 0);
+      }
       if (dev.type === 'cover') {
         g.classList.toggle('closed', s === 'closed');
         g.classList.toggle('moving', s === 'opening' || s === 'closing');
@@ -560,7 +679,7 @@ class FloorplanTempCard extends HTMLElement {
           valueText.classList.toggle('live', isLive); // .live (!important) wins over both
         }
       } else {
-        shape.setAttribute('fill', 'var(--secondary-background-color, #eef1f4)');
+        shape.setAttribute('fill', 'var(--fp-neutral)');
         if (valueText) { valueText.textContent = '–'; valueText.style.fill = ''; valueText.classList.remove('live'); }
       }
       if (deltaText) {
@@ -611,6 +730,12 @@ class FloorplanTempCard extends HTMLElement {
       for (const ent of entities) this._deltas.set(ent, null);
     }
     this._updateAll();
+  }
+
+  _callDim(entity, pct) {
+    if (!this._hass) return;
+    if (pct <= 0) this._hass.callService('light', 'turn_off', { entity_id: entity });
+    else this._hass.callService('light', 'turn_on', { entity_id: entity, brightness_pct: pct });
   }
 
   _openMoreInfo(entityId) {
