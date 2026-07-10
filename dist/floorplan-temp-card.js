@@ -5,7 +5,7 @@
  * No dependencies, no build step. MIT.
  */
 
-const VERSION = '0.6.0';
+const VERSION = '0.7.0';
 
 // Device icons placed on the plan (24×24 mdi paths)
 const DEVICE_ICONS = {
@@ -206,9 +206,13 @@ class FloorplanTempCard extends HTMLElement {
     if (config.devices !== undefined) {
       if (!Array.isArray(config.devices)) throw new Error('floorplan-temp-card: "devices" must be a list');
       for (const dv of config.devices) {
-        if (!['light', 'cover', 'switch'].includes(dv.type) || !dv.entity
-          || !Array.isArray(dv.at) || dv.at.length !== 2) {
-          throw new Error('floorplan-temp-card: every device needs type (light/cover/switch), entity and at:[x,y]');
+        const okType = ['light', 'cover', 'switch'].includes(dv.type);
+        const hasAt = Array.isArray(dv.at) && dv.at.length === 2;
+        const hasSegment = Array.isArray(dv.from) && dv.from.length === 2
+          && Array.isArray(dv.to) && dv.to.length === 2;
+        // covers are wall segments (from/to); lights/switches are points (at)
+        if (!okType || !dv.entity || !(dv.type === 'cover' ? hasSegment || hasAt : hasAt)) {
+          throw new Error('floorplan-temp-card: device needs type, entity and at:[x,y] (cover: from/to:[x,y])');
         }
       }
     }
@@ -335,6 +339,12 @@ class FloorplanTempCard extends HTMLElement {
       .device.moving .device-bg { animation: fp-livepulse 1.2s ease-in-out infinite; }
       .device.unavail { opacity: 0.4; }
       .device.unavail .device-bg { stroke-dasharray: 3 3; }
+      /* covers drawn as real blinds: a bar along the window, filled by closed fraction */
+      .cover-border { stroke: #7d8b9d; stroke-linecap: round; }
+      .cover-track { stroke: #f2f5f9; stroke-linecap: round; }
+      .cover-fill { stroke: #46566b; stroke-linecap: butt; }
+      .device.moving .cover-fill { animation: fp-livepulse 1.2s ease-in-out infinite; }
+      .cover-hit { stroke: transparent; stroke-linecap: round; cursor: pointer; }
     `;
     this.shadowRoot.appendChild(style);
 
@@ -411,6 +421,25 @@ class FloorplanTempCard extends HTMLElement {
     this._devRefs = [];
     const devR = Math.max(11, w * 0.021);
     for (const dev of c.devices) {
+      if (dev.type === 'cover' && dev.from && dev.to) {
+        // real blind: bar along the window, fill grows with closed fraction
+        const g = svgEl('g', { class: 'device cover-bar' });
+        const tip = svgEl('title');
+        tip.textContent = dev.name || dev.entity;
+        g.appendChild(tip);
+        const bw = dev.width || Math.max(7, w * 0.013);
+        const [x1, y1] = dev.from, [x2, y2] = dev.to;
+        g.appendChild(svgEl('line', { x1, y1, x2, y2, class: 'cover-border', 'stroke-width': bw + 3 }));
+        g.appendChild(svgEl('line', { x1, y1, x2, y2, class: 'cover-track', 'stroke-width': bw }));
+        const fill = svgEl('line', { x1, y1, x2: x1, y2: y1, class: 'cover-fill', 'stroke-width': bw });
+        g.appendChild(fill);
+        const hit = svgEl('line', { x1, y1, x2, y2, class: 'cover-hit', 'stroke-width': bw + 14 });
+        g.appendChild(hit);
+        hit.addEventListener('click', (ev) => { ev.stopPropagation(); this._openMoreInfo(dev.entity); });
+        svg.appendChild(g);
+        this._devRefs.push({ dev, g, fill });
+        continue;
+      }
       const g = svgEl('g', {
         class: `device ${dev.type}`,
         transform: `translate(${dev.at[0]}, ${dev.at[1]})`,
@@ -488,13 +517,24 @@ class FloorplanTempCard extends HTMLElement {
 
   _updateAll() {
     if (!this._hass || !this._config) return;
-    for (const { dev, g } of this._devRefs || []) {
+    for (const { dev, g, fill } of this._devRefs || []) {
       const st = this._hass.states[dev.entity];
       const s = st ? st.state : 'unavailable';
       g.classList.toggle('unavail', s === 'unavailable' || s === 'unknown');
       if (dev.type === 'cover') {
         g.classList.toggle('closed', s === 'closed');
         g.classList.toggle('moving', s === 'opening' || s === 'closing');
+        if (fill) {
+          // closed fraction: HA position 100 = offen, 0 = zu
+          const pos = st && st.attributes && typeof st.attributes.current_position === 'number'
+            ? st.attributes.current_position
+            : (s === 'closed' ? 0 : 100);
+          const f = Math.min(1, Math.max(0, 1 - pos / 100));
+          const [x1, y1] = dev.from, [x2, y2] = dev.to;
+          fill.setAttribute('x2', x1 + (x2 - x1) * f);
+          fill.setAttribute('y2', y1 + (y2 - y1) * f);
+          fill.style.display = f < 0.02 ? 'none' : '';
+        }
       } else {
         g.classList.toggle('on', s === 'on');
       }

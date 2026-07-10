@@ -57,12 +57,16 @@
   .device-bg{fill:#fff;stroke:#c6cfda;stroke-width:1.5;cursor:move}
   .device-bg.dsel{stroke:var(--sel);stroke-width:3}
   .device-icon{fill:#8a94a0;pointer-events:none}
+  .cover-border{stroke:#7d8b9d;stroke-linecap:round;pointer-events:none}
+  .cover-border.dsel{stroke:var(--sel)}
+  .cover-track{stroke:#f2f5f9;stroke-linecap:round;pointer-events:none}
+  .cover-hit{stroke:transparent;stroke-linecap:round;cursor:move}
   #bgimg{pointer-events:none}
 </style>
 </head>
 <body>
 <header>
-  <h1>🏠 Grundriss-Editor <small style="font-size:11px;font-weight:400;opacity:.55">v0.6.0</small></h1>
+  <h1>🏠 Grundriss-Editor <small style="font-size:11px;font-weight:400;opacity:.55">v0.7.0</small></h1>
   <div class="tabs" id="tabs"></div>
   <div class="tools">
     <button class="tool on" data-tool="select" title="Auswählen/Verschieben (V)">✥ Auswahl</button>
@@ -121,7 +125,7 @@
       2. Mit ▭ Räume über die Zimmer ziehen (Raster 5 px).<br>
       3. Raum anklicken → Name + Sensor-Entity zuweisen.<br>
       3b. L-/T-förmige Räume: mehrere Rechtecke zeichnen, mit <b>Shift-Klick</b> zusammen auswählen → „Zu einer Fläche vereinen". Trennen jederzeit über „Flächen trennen".<br>
-      3c. 💡/▤/🔌: Lichter, Storen und Steckdosen aufs Bild setzen (L/S), Entity zuweisen. In der Karte: Licht-Tap schaltet, lang drücken = Details; Store-Tap öffnet die Steuerung.<br>
+      3c. 💡/🔌: Lichter und Steckdosen aufs Bild setzen (L), Entity zuweisen. ▤ Store (S): <b>am Fenster entlang aufziehen</b> — wird ein Balken, Endpunkte ziehen = Länge ändern. In der Karte: Licht-Tap schaltet, lang drücken = Details; Store-Tap öffnet die Steuerung, Füllung = wie weit unten.<br>
       4. „YAML exportieren" → Config in HA einfügen (<code>custom:floorplan-temp-card</code>).<br>
       Projekt wird automatisch im Browser gespeichert.</div>
   </aside>
@@ -171,6 +175,19 @@ const DEVICE_ICONS = {
 };
 const devices = () => (floor().devices = floor().devices || []);
 const devById = (id) => devices().find((d) => d.id === id);
+// Alt-Format migrieren: Store als Punkt (at) → Segment (from/to, 60 px horizontal)
+function normalizeProject() {
+  for (const f of project.floors) {
+    for (const d of f.devices || []) {
+      if (d.type === 'cover' && d.at && !d.from) {
+        d.from = [d.at[0] - 30, d.at[1]];
+        d.to = [d.at[0] + 30, d.at[1]];
+        delete d.at;
+      }
+    }
+  }
+}
+normalizeProject();
 let bgImages = {}; // floorKey -> dataURL (session only, never exported)
 let draft = null;  // {x0,y0,x1,y1} while dragging rect, or {points:[]} for poly
 let drag = null;   // move/resize/vertex/label drag state
@@ -330,12 +347,27 @@ function render() {
   }
 
   for (const dv of devices()) {
+    if (dv.type === 'cover' && dv.from) {
+      const [x1, y1] = dv.from, [x2, y2] = dv.to;
+      const sel = dv.id === devSel;
+      svg.appendChild(el('line', { x1, y1, x2, y2, class: 'cover-border' + (sel ? ' dsel' : ''), 'stroke-width': 12 }));
+      svg.appendChild(el('line', { x1, y1, x2, y2, class: 'cover-track', 'stroke-width': 9 }));
+      svg.appendChild(el('line', { x1, y1, x2, y2, class: 'cover-hit', 'stroke-width': 22, 'data-dev': dv.id }));
+      if (sel) {
+        svg.appendChild(el('circle', { cx: x1, cy: y1, r: 6, class: 'vhandle', 'data-h': 'de0' }));
+        svg.appendChild(el('circle', { cx: x2, cy: y2, r: 6, class: 'vhandle', 'data-h': 'de1' }));
+      }
+      continue;
+    }
     const g = el('g', { transform: `translate(${dv.at[0]}, ${dv.at[1]})` });
     const bg = el('circle', { r: 13, class: 'device-bg' + (dv.id === devSel ? ' dsel' : ''), 'data-dev': dv.id });
     g.appendChild(bg);
     const is = 0.75;
     g.appendChild(el('path', { d: DEVICE_ICONS[dv.type], transform: `translate(${-12 * is}, ${-12 * is}) scale(${is})`, class: 'device-icon' }));
     svg.appendChild(g);
+  }
+  if (draft && draft.devLine) {
+    svg.appendChild(el('line', { x1: draft.x0, y1: draft.y0, x2: draft.x1, y2: draft.y1, class: 'cover-border', 'stroke-width': 12, opacity: 0.6 }));
   }
 
   if (draft) {
@@ -424,7 +456,12 @@ svg.addEventListener('pointerdown', (ev) => {
     render();
     return;
   }
-  if (tool === 'light' || tool === 'cover' || tool === 'switch') {
+  if (tool === 'cover') {
+    draft = { devLine: true, x0: x, y0: y, x1: x, y1: y };
+    svg.setPointerCapture(ev.pointerId);
+    return;
+  }
+  if (tool === 'light' || tool === 'switch') {
     let n = devices().length + 1;
     let id = 'dev-' + n;
     while (devById(id)) id = 'dev-' + ++n;
@@ -435,7 +472,13 @@ svg.addEventListener('pointerdown', (ev) => {
     render();
     return;
   }
-  // select tool — devices first (they sit on top)
+  // select tool — device endpoint handles, then devices, then rooms
+  const dvSel = devById(devSel);
+  if (h && (h === 'de0' || h === 'de1') && dvSel) {
+    drag = { type: h, start: [x, y], orig: JSON.parse(JSON.stringify(dvSel)) };
+    svg.setPointerCapture(ev.pointerId);
+    return;
+  }
   const devId = ev.target.getAttribute && ev.target.getAttribute('data-dev');
   if (devId) {
     setSel([]); devSel = devId;
@@ -472,7 +515,21 @@ svg.addEventListener('pointermove', (ev) => {
   if (!drag) return;
   if (drag.type === 'device') {
     const dv = devById(devSel);
-    if (dv) { dv.at = [x, y]; render(); }
+    if (dv) {
+      if (dv.from) {
+        const o = drag.orig, dx = x - drag.start[0], dy = y - drag.start[1];
+        dv.from = [snap(o.from[0] + dx), snap(o.from[1] + dy)];
+        dv.to = [snap(o.to[0] + dx), snap(o.to[1] + dy)];
+      } else {
+        dv.at = [x, y];
+      }
+      render();
+    }
+    return;
+  }
+  if (drag.type === 'de0' || drag.type === 'de1') {
+    const dv = devById(devSel);
+    if (dv && dv.from) { dv[drag.type === 'de0' ? 'from' : 'to'] = [x, y]; render(); }
     return;
   }
   const r = roomById(selId);
@@ -511,6 +568,27 @@ svg.addEventListener('pointermove', (ev) => {
 });
 
 svg.addEventListener('pointerup', () => {
+  if (draft && draft.devLine) {
+    let { x0, y0, x1, y1 } = draft;
+    draft = null;
+    const dx = x1 - x0, dy = y1 - y0;
+    const len = Math.hypot(dx, dy);
+    if (len >= SNAP * 3) {
+      // an Achse ausrichten, wenn fast horizontal/vertikal (±12°)
+      const ang = Math.abs(Math.atan2(dy, dx)) * 180 / Math.PI;
+      if (ang < 12 || ang > 168) y1 = y0;
+      else if (Math.abs(ang - 90) < 12) x1 = x0;
+      let n = devices().length + 1;
+      let id = 'dev-' + n;
+      while (devById(id)) id = 'dev-' + ++n;
+      devices().push({ id, type: 'cover', from: [x0, y0], to: [x1, y1] });
+      setSel([]); devSel = id;
+      setTool('select');
+      persist();
+    }
+    render();
+    return;
+  }
   if (draft && !draft.points) {
     const x = Math.min(draft.x0, draft.x1), y = Math.min(draft.y0, draft.y1);
     const w = Math.abs(draft.x1 - draft.x0), h = Math.abs(draft.y1 - draft.y0);
@@ -676,7 +754,8 @@ function importProject(file) {
     try {
       const p = JSON.parse(rd.result);
       if (!Array.isArray(p.floors)) throw new Error('keine "floors"-Liste gefunden');
-      project = p; project.active = project.active || 0; setSel([]);
+      project = p; project.active = project.active || 0; setSel([]); devSel = null;
+      normalizeProject();
       persist(); render();
     } catch (e) { alert('Ungültige Projektdatei: ' + e.message); }
   };
@@ -716,7 +795,9 @@ function roomYaml(r) {
   return `  - {${parts.join(', ')}}`;
 }
 function deviceYaml(d) {
-  const parts = [`type: ${d.type}`, `entity: ${d.entity || 'TODO'}`, `at: [${d.at.map(Math.round).join(', ')}]`];
+  const parts = [`type: ${d.type}`, `entity: ${d.entity || 'TODO'}`];
+  if (d.from) parts.push(`from: [${d.from.map(Math.round).join(', ')}]`, `to: [${d.to.map(Math.round).join(', ')}]`);
+  else parts.push(`at: [${d.at.map(Math.round).join(', ')}]`);
   if (d.name) parts.push(`name: ${yq(d.name)}`);
   return `  - {${parts.join(', ')}}`;
 }
