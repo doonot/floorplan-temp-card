@@ -5,7 +5,7 @@
  * No dependencies, no build step. MIT.
  */
 
-const VERSION = '0.7.0';
+const VERSION = '0.7.1';
 
 // Device icons placed on the plan (24×24 mdi paths)
 const DEVICE_ICONS = {
@@ -286,7 +286,7 @@ class FloorplanTempCard extends HTMLElement {
         font-size: 1.15em; font-weight: 700;
         color: var(--primary-text-color);
       }
-      svg { display: block; width: 100%; height: auto; }
+      svg { display: block; width: 100%; height: auto; touch-action: manipulation; }
       .room-hit { cursor: pointer; }
       .wall { stroke: ${c.wall_color || 'var(--primary-text-color, #2b3542)'}; stroke-width: 2.5;
               stroke-linejoin: miter; opacity: 0.85; }
@@ -327,6 +327,8 @@ class FloorplanTempCard extends HTMLElement {
       }
       /* devices (lights, covers, sockets) placed on the plan */
       .device { cursor: pointer; }
+      /* big invisible touch target — icons stay elegant, fingers still hit them */
+      .device .device-hit { fill: transparent; stroke: none; }
       .device .device-bg {
         fill: var(--card-background-color, #fff); stroke: var(--divider-color, #d5dbe2);
         stroke-width: 1.5; filter: drop-shadow(0 1px 2px rgba(16, 24, 40, 0.18));
@@ -419,7 +421,7 @@ class FloorplanTempCard extends HTMLElement {
 
     // devices on top of the rooms
     this._devRefs = [];
-    const devR = Math.max(11, w * 0.021);
+    const devR = Math.max(13, w * 0.027);
     for (const dev of c.devices) {
       if (dev.type === 'cover' && dev.from && dev.to) {
         // real blind: bar along the window, fill grows with closed fraction
@@ -433,7 +435,7 @@ class FloorplanTempCard extends HTMLElement {
         g.appendChild(svgEl('line', { x1, y1, x2, y2, class: 'cover-track', 'stroke-width': bw }));
         const fill = svgEl('line', { x1, y1, x2: x1, y2: y1, class: 'cover-fill', 'stroke-width': bw });
         g.appendChild(fill);
-        const hit = svgEl('line', { x1, y1, x2, y2, class: 'cover-hit', 'stroke-width': bw + 14 });
+        const hit = svgEl('line', { x1, y1, x2, y2, class: 'cover-hit', 'stroke-width': bw + 28 });
         g.appendChild(hit);
         hit.addEventListener('click', (ev) => { ev.stopPropagation(); this._openMoreInfo(dev.entity); });
         svg.appendChild(g);
@@ -447,6 +449,7 @@ class FloorplanTempCard extends HTMLElement {
       const tip = svgEl('title');
       tip.textContent = dev.name || dev.entity;
       g.appendChild(tip);
+      g.appendChild(svgEl('circle', { r: devR + 16, class: 'device-hit' }));
       g.appendChild(svgEl('circle', { r: devR, class: 'device-bg' }));
       const is = (devR * 1.35) / 24;
       g.appendChild(svgEl('path', {
