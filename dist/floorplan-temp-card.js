@@ -5,7 +5,7 @@
  * No dependencies, no build step. MIT.
  */
 
-const VERSION = '0.12.0';
+const VERSION = '0.13.0';
 
 // Device icons placed on the plan (24×24 mdi paths)
 const DEVICE_ICONS = {
@@ -276,6 +276,9 @@ class FloorplanTempCard extends HTMLElement {
       rooms: config.rooms,
       devices: config.devices || [],
       decor: config.decor || [],
+      // zusätzliche Entities, die "🌙 Schlafen" mit ausschaltet (z. B. Hue-Lampen
+      // ohne Platzierung auf dem Plan)
+      sleep_extra: Array.isArray(config.sleep_extra) ? config.sleep_extra : [],
       // true | false | 'auto' (follows the HA dark mode)
       dark: config.dark === undefined ? 'auto' : config.dark,
     };
@@ -500,6 +503,14 @@ class FloorplanTempCard extends HTMLElement {
           this._hass && this._hass.callService('cover', 'open_cover', { entity_id: coverIds }));
         btn('▼ Zu', 'Alle Storen schliessen', () =>
           this._hass && this._hass.callService('cover', 'close_cover', { entity_id: coverIds }));
+      }
+      if (lightIds.length || coverIds.length || c.sleep_extra.length) {
+        btn('🌙 Schlafen', 'Alle Storen zu, alle Lichter aus', () => {
+          if (!this._hass) return;
+          if (coverIds.length) this._hass.callService('cover', 'close_cover', { entity_id: coverIds });
+          if (lightIds.length) this._hass.callService('light', 'turn_off', { entity_id: lightIds });
+          if (c.sleep_extra.length) this._hass.callService('homeassistant', 'turn_off', { entity_id: c.sleep_extra });
+        });
       }
       if (sc.children.length) header.appendChild(sc);
       card.appendChild(header);
