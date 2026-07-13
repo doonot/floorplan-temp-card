@@ -5,7 +5,7 @@
  * No dependencies, no build step. MIT.
  */
 
-const VERSION = '0.16.0';
+const VERSION = '0.16.1';
 
 // Sichtbarkeits-Ebenen: global über alle Karten synchron (localStorage +
 // Custom-Event), umgeschaltet über die Legende unter dem Kartenkopf.
@@ -719,15 +719,18 @@ class FloorplanTempCard extends HTMLElement {
       const L = Math.hypot(x2 - x1, y2 - y1) || 1;
       // Öffnung: Wandstrich unterbrechen
       svg.appendChild(svgEl('line', { x1, y1, x2, y2, class: 'door-gap' }));
-      // Flügel: Angel bei from, Schwenk zur linken Seite (swing: -1 spiegelt)
-      const sw = dr.swing === -1 ? -1 : 1;
-      const nx = (-(y2 - y1) / L) * sw, ny = ((x2 - x1) / L) * sw;
-      const tipX = x1 + nx * L, tipY = y1 + ny * L;
-      svg.appendChild(svgEl('path', {
-        d: `M${tipX},${tipY} A${L},${L} 0 0,${sw === 1 ? 1 : 0} ${x2},${y2}`,
-        class: 'door-arc',
-      }));
-      svg.appendChild(svgEl('line', { x1, y1, x2: tipX, y2: tipY, class: 'door-leaf' }));
+      if (!dr.opening) {
+        // Flügel: Angel bei from, Schwenk zur linken Seite (swing: -1 spiegelt);
+        // opening: true = reiner Durchgang ohne Türblatt
+        const sw = dr.swing === -1 ? -1 : 1;
+        const nx = (-(y2 - y1) / L) * sw, ny = ((x2 - x1) / L) * sw;
+        const tipX = x1 + nx * L, tipY = y1 + ny * L;
+        svg.appendChild(svgEl('path', {
+          d: `M${tipX},${tipY} A${L},${L} 0 0,${sw === 1 ? 1 : 0} ${x2},${y2}`,
+          class: 'door-arc',
+        }));
+        svg.appendChild(svgEl('line', { x1, y1, x2: tipX, y2: tipY, class: 'door-leaf' }));
+      }
     }
 
     // decor: trees, hedges, plants — purely visual, under the devices
@@ -778,10 +781,21 @@ class FloorplanTempCard extends HTMLElement {
       const cp = svgEl('clipPath', { id: `fp-clip-${id}` });
       cp.appendChild(svgEl('path', { d: loopsToPath(ref.loops), 'clip-rule': 'evenodd' }));
       for (const dr of c.doors) {
-        const mx = (dr.from[0] + dr.to[0]) / 2, my = (dr.from[1] + dr.to[1]) / 2;
-        const len = Math.hypot(dr.to[0] - dr.from[0], dr.to[1] - dr.from[1]);
-        const r = Math.max(24, Math.min(85, len * 1.1));
-        cp.appendChild(svgEl('circle', { cx: mx, cy: my, r }));
+        // Blende exakt in Türbreite: Mittelkreis spannt genau die Öffnung
+        // (r = L/2, endet an den Türpfosten), die beiden versetzten Kreise
+        // (d = 0.6L, r = 0.78L) schneiden die Wandlinie mit Halbbreite
+        // sqrt(r²−d²) = 0.5L — nie breiter als die Tür, aber wellenförmig
+        // bis ~1.4L in den Nachbarraum.
+        const [x1, y1] = dr.from, [x2, y2] = dr.to;
+        const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+        const L = Math.hypot(x2 - x1, y2 - y1) || 1;
+        const nx = -(y2 - y1) / L, ny = (x2 - x1) / L;
+        cp.appendChild(svgEl('circle', { cx: mx, cy: my, r: L / 2 }));
+        for (const s of [1, -1]) {
+          cp.appendChild(svgEl('circle', {
+            cx: mx + nx * 0.6 * L * s, cy: my + ny * 0.6 * L * s, r: 0.78 * L,
+          }));
+        }
       }
       defs.appendChild(cp);
     }

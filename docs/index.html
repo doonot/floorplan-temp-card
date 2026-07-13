@@ -80,7 +80,7 @@
 </head>
 <body>
 <header>
-  <h1>🏠 Grundriss-Editor <small style="font-size:11px;font-weight:400;opacity:.55">v0.16.0</small></h1>
+  <h1>🏠 Grundriss-Editor <small style="font-size:11px;font-weight:400;opacity:.55">v0.16.1</small></h1>
   <div class="tabs" id="tabs"></div>
   <div class="tools">
     <button class="tool on" data-tool="select" title="Auswählen/Verschieben (V)">✥ Auswahl</button>
@@ -160,6 +160,7 @@
       <div class="field" id="dCableRow" hidden><label>Kabel-Nr. (z. B. B12)</label>
         <input type="text" id="dCable" placeholder="B12"></div>
       <label class="chk" id="dSwingRow" hidden><input type="checkbox" id="dSwing"> Türanschlag spiegeln</label>
+      <label class="chk" id="dOpeningRow" hidden><input type="checkbox" id="dOpening"> Offener Durchgang (ohne Türblatt)</label>
       <div class="hint">Verschieben: ziehen · Löschen: ⌫</div>
       <button class="act" id="dDelete" style="color:#c22">Gerät löschen</button>
     </div>
@@ -433,8 +434,10 @@ function render() {
     const sw = dr.swing === -1 ? -1 : 1;
     const nx = (-(y2 - y1) / L) * sw, ny = ((x2 - x1) / L) * sw;
     svg.appendChild(el('line', { x1, y1, x2, y2, class: 'ed-doorgap' + (sel ? ' dsel2' : ''), 'data-dev': dr.id }));
-    svg.appendChild(el('path', { d: `M${x1 + nx * L},${y1 + ny * L} A${L},${L} 0 0,${sw === 1 ? 1 : 0} ${x2},${y2}`, class: 'ed-doorarc' }));
-    svg.appendChild(el('line', { x1, y1, x2: x1 + nx * L, y2: y1 + ny * L, class: 'ed-doorarc' }));
+    if (!dr.opening) {
+      svg.appendChild(el('path', { d: `M${x1 + nx * L},${y1 + ny * L} A${L},${L} 0 0,${sw === 1 ? 1 : 0} ${x2},${y2}`, class: 'ed-doorarc' }));
+      svg.appendChild(el('line', { x1, y1, x2: x1 + nx * L, y2: y1 + ny * L, class: 'ed-doorarc' }));
+    }
     if (sel) {
       svg.appendChild(el('circle', { cx: x1, cy: y1, r: 6, class: 'vhandle', 'data-h': 'de0' }));
       svg.appendChild(el('circle', { cx: x2, cy: y2, r: 6, class: 'vhandle', 'data-h': 'de1' }));
@@ -566,8 +569,10 @@ function renderSidebar() {
     document.getElementById('dType').textContent = { light: '· Licht', cover: '· Store', switch: '· Steckdose', mower: '· Mähroboter', sprinkler: '· Bewässerung', ac: '· Klimaanlage', camera: '· Kamera', ap: '· WLAN-AP', door: '· Türe', tree: '· Baum', hedge: '· Hecke', plant: '· Pflanze' }[dv.type] || '';
     const isDecor = DECOR_TYPES.includes(dv.type) || dv.type === 'door';
     const hasRange = dv.type === 'camera' || dv.type === 'ap';
-    document.getElementById('dSwingRow').hidden = dv.type !== 'door';
+    document.getElementById('dSwingRow').hidden = dv.type !== 'door' || dv.opening === true;
     document.getElementById('dSwing').checked = dv.swing === -1;
+    document.getElementById('dOpeningRow').hidden = dv.type !== 'door';
+    document.getElementById('dOpening').checked = dv.opening === true;
     document.getElementById('dEntityRow').hidden = isDecor;
     document.getElementById('dSizeRow').hidden = (!DECOR_TYPES.includes(dv.type) && !hasRange) || dv.type === 'door';
     document.getElementById('dSize').value = hasRange
@@ -974,6 +979,11 @@ document.getElementById('dSwing').addEventListener('change', (ev) => {
   if (ev.target.checked) dv.swing = -1; else delete dv.swing;
   persist(); render();
 });
+document.getElementById('dOpening').addEventListener('change', (ev) => {
+  const dv = anyById(devSel); if (!dv) return;
+  if (ev.target.checked) dv.opening = true; else delete dv.opening;
+  persist(); render(); renderSidebar();
+});
 document.getElementById('dSize').addEventListener('input', (ev) => {
   const dv = anyById(devSel); if (!dv) return;
   const v = parseInt(ev.target.value, 10);
@@ -1133,6 +1143,7 @@ document.getElementById('exportBtn').onclick = () => {
     ...(f.doors && f.doors.length ? ['doors:', ...f.doors.map((dr) => {
       const parts = [`from: [${dr.from.map(Math.round).join(', ')}]`, `to: [${dr.to.map(Math.round).join(', ')}]`];
       if (dr.swing === -1) parts.push('swing: -1');
+      if (dr.opening) parts.push('opening: true');
       return `  - {${parts.join(', ')}}`;
     })] : []),
     ...(f.decor && f.decor.length ? ['decor:', ...f.decor.map((dc) => {
