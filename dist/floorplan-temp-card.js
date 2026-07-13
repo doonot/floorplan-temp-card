@@ -5,7 +5,7 @@
  * No dependencies, no build step. MIT.
  */
 
-const VERSION = '0.11.0';
+const VERSION = '0.12.0';
 
 // Device icons placed on the plan (24×24 mdi paths)
 const DEVICE_ICONS = {
@@ -366,6 +366,17 @@ class FloorplanTempCard extends HTMLElement {
       .neutral { fill: var(--fp-neutral); }
       .neutral.lit { fill: #f3ecd9; }
       .dark .neutral.lit { fill: #272f42; }
+      /* surface types: garden lawn, paver pattern, stair stripes — also on outlines */
+      .garden, .outline.garden { fill: #b5d5a7; }
+      .garden.lit, .outline.garden.lit { fill: #c4e0b6; }
+      .dark .garden, .dark .outline.garden { fill: #1d3325; }
+      .dark .garden.lit, .dark .outline.garden.lit { fill: #27422f; }
+      .paving, .outline.paving { fill: url(#fp-paving); }
+      .stairs, .outline.stairs { fill: url(#fp-stairs); }
+      .pav-bg { fill: #dde1e6; } .pav-line { stroke: #c3c9d1; stroke-width: 1.5; }
+      .dark .pav-bg { fill: #212936; } .dark .pav-line { stroke: #303b4d; }
+      .stair-bg { fill: var(--fp-neutral); } .stair-line { stroke: #b9c1cb; stroke-width: 2; }
+      .dark .stair-line { stroke: #37435a; }
       .outline { fill: none; stroke: var(--secondary-text-color, #9aa7b4);
                  stroke-width: 2; stroke-dasharray: 7 6; opacity: 0.9; }
       text { font-family: var(--paper-font-body1_-_font-family, -apple-system, 'Segoe UI', Roboto, sans-serif);
@@ -505,8 +516,12 @@ class FloorplanTempCard extends HTMLElement {
       // may trace holes/islands as extra loops).
       const points = loops.reduce((a, b) => (loopArea(b) > loopArea(a) ? b : a), loops[0]);
       const shape = svgEl('path', { d: loopsToPath(loops), 'fill-rule': 'evenodd' });
+      // surface: garden | paving | stairs (garden: true bleibt als Alias)
+      const surface = room.surface || (room.garden ? 'garden' : '');
       if (room.outline) {
-        shape.setAttribute('class', 'outline');
+        shape.setAttribute('class', 'outline' + (surface ? ' ' + surface : ''));
+      } else if (surface) {
+        shape.setAttribute('class', 'wall ' + surface);
       } else {
         shape.setAttribute('class', room.entity ? 'wall' : 'wall neutral');
         // Neutral until the first hass update paints the derived shade.
@@ -581,6 +596,16 @@ class FloorplanTempCard extends HTMLElement {
     grad.appendChild(svgEl('stop', { offset: '55%', 'stop-color': '#f0b429', 'stop-opacity': '0.16' }));
     grad.appendChild(svgEl('stop', { offset: '100%', 'stop-color': '#f0b429', 'stop-opacity': '0' }));
     defs.appendChild(grad);
+    // surface patterns (CSS-classed contents → theme-aware)
+    const pav = svgEl('pattern', { id: 'fp-paving', patternUnits: 'userSpaceOnUse', width: 36, height: 24 });
+    pav.appendChild(svgEl('rect', { width: 36, height: 24, class: 'pav-bg' }));
+    // Läuferverband: Horizontalfugen + versetzte Stossfugen
+    pav.appendChild(svgEl('path', { d: 'M0,0 H36 M0,12 H36 M9,0 V12 M27,12 V24', class: 'pav-line', fill: 'none' }));
+    defs.appendChild(pav);
+    const stair = svgEl('pattern', { id: 'fp-stairs', patternUnits: 'userSpaceOnUse', width: 24, height: 14 });
+    stair.appendChild(svgEl('rect', { width: 24, height: 14, class: 'stair-bg' }));
+    stair.appendChild(svgEl('path', { d: 'M0,7 H24', class: 'stair-line', fill: 'none' }));
+    defs.appendChild(stair);
     // per-room clip paths so the glow stays inside the room
     for (const [id, ref] of this._refs) {
       const cp = svgEl('clipPath', { id: `fp-clip-${id}` });
@@ -807,7 +832,7 @@ class FloorplanTempCard extends HTMLElement {
         return ls && ls.state === 'on';
       });
       shape.classList.toggle('lit', lit); // brightens rooms without a sensor via CSS
-      if (!room.entity || room.outline) continue;
+      if (!room.entity || room.outline || room.surface || room.garden) continue;
       const st = this._hass.states[room.entity];
       const temp = st ? parseFloat(st.state) : NaN;
       if (liveIcon) {

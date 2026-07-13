@@ -61,6 +61,9 @@
   .cover-border.dsel{stroke:var(--sel)}
   .cover-track{stroke:#f2f5f9;stroke-linecap:round;pointer-events:none}
   .cover-hit{stroke:transparent;stroke-linecap:round;cursor:move}
+  .room-shape.surf-garden{fill:#b5d5a7 !important;fill-opacity:.8}
+  .room-shape.surf-paving{fill:#d9dde2 !important;fill-opacity:.9}
+  .room-shape.surf-stairs{fill:#e6eaef !important;fill-opacity:.9}
   .ed-canopy{fill:#7fae7c;stroke:#5d8f5b;stroke-width:1.5;cursor:move}
   .ed-hedge{stroke:#7fae7c;stroke-linecap:round;cursor:move}
   .dsel2{stroke:var(--sel) !important;stroke-width:3}
@@ -122,6 +125,13 @@
       <div class="field"><label>Name</label><input type="text" id="pName"></div>
       <div class="field"><label>Entity (Temperatur-Sensor, leer = unbeheizt)</label>
         <input type="text" id="pEntity" placeholder="sensor.xyz_temperatur" list="entlist"><datalist id="entlist"></datalist></div>
+      <div class="field"><label>Fläche</label>
+        <select id="pSurface" style="width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:8px;font:inherit">
+          <option value="">Normal (Innenraum)</option>
+          <option value="garden">Garten (grün)</option>
+          <option value="paving">Pflasterstein (Vorplatz)</option>
+          <option value="stairs">Treppe (Stufen)</option>
+        </select></div>
       <label class="chk"><input type="checkbox" id="pOutline"> Nur Umriss (Balkon/Terrasse)</label>
       <label class="chk"><input type="checkbox" id="pHideLabel"> Label ausblenden (z. B. Gang)</label>
       <div class="hint">Verschieben: ziehen · Größe: Ecken ziehen · Label: violetten Punkt ziehen · Löschen: ⌫</div>
@@ -346,7 +356,8 @@ function render() {
   for (const r of f.rooms) {
     const pts = roomPoints(r);
     const shape = el('path', { d: loopsToPath(roomLoops(r)), 'fill-rule': 'evenodd', 'data-id': r.id });
-    shape.setAttribute('class', 'room-shape' + (r.outline ? ' outl' : r.entity ? '' : ' noent') + (selIds.includes(r.id) ? ' sel' : ''));
+    shape.setAttribute('class', 'room-shape' + (r.outline ? ' outl' : r.entity ? '' : ' noent')
+      + (r.surface ? ' surf-' + r.surface : '') + (selIds.includes(r.id) ? ' sel' : ''));
     svg.appendChild(shape);
     const roomier = (a, b) => {
       const ma = Math.min(a[2], a[3]), mb = Math.min(b[2], b[3]);
@@ -476,6 +487,7 @@ function renderSidebar() {
     document.getElementById('pEntity').value = r.entity || '';
     document.getElementById('pOutline').checked = !!r.outline;
     document.getElementById('pHideLabel').checked = r.show_label === false;
+    document.getElementById('pSurface').value = r.surface || '';
     document.getElementById('pSplit').hidden = !r.rects;
   }
   const dprops = document.getElementById('dprops');
@@ -872,6 +884,11 @@ for (const [id, key] of [['pName', 'name'], ['pEntity', 'entity']]) {
     document.getElementById(id).focus();
   });
 }
+document.getElementById('pSurface').addEventListener('change', (ev) => {
+  const r = roomById(selId); if (!r) return;
+  if (ev.target.value) r.surface = ev.target.value; else delete r.surface;
+  persist(); render();
+});
 document.getElementById('pOutline').addEventListener('change', (ev) => {
   const r = roomById(selId); if (!r) return;
   if (ev.target.checked) r.outline = true; else delete r.outline;
@@ -953,6 +970,7 @@ function roomYaml(r) {
   if (r.entity) parts.push(`entity: ${r.entity}`);
   if (r.show_label === false) parts.push('show_label: false');
   if (r.outline) parts.push('outline: true');
+  if (r.surface) parts.push(`surface: ${r.surface}`);
   if (r.label) parts.push(`label: [${r.label.map(Math.round).join(', ')}]`);
   return `  - {${parts.join(', ')}}`;
 }
