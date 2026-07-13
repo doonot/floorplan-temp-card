@@ -5,7 +5,7 @@
  * No dependencies, no build step. MIT.
  */
 
-const VERSION = '0.16.1';
+const VERSION = '0.16.2';
 
 // Sichtbarkeits-Ebenen: global über alle Karten synchron (localStorage +
 // Custom-Event), umgeschaltet über die Legende unter dem Kartenkopf.
@@ -774,29 +774,12 @@ class FloorplanTempCard extends HTMLElement {
     stair.appendChild(svgEl('rect', { width: 24, height: 14, class: 'stair-bg' }));
     stair.appendChild(svgEl('path', { d: 'M0,7 H24', class: 'stair-line', fill: 'none' }));
     defs.appendChild(stair);
-    // per-room clip paths so the glow stays inside the room. Türen stanzen
-    // runde Durchlässe in JEDES Raum-Clipping: Licht/WLAN quellen wellenförmig
-    // durch die Öffnung — bei Räumen ohne Quelle in Türnähe bleibt das folgenlos.
+    // per-room clip paths so the glow stays inside the room. (Der Tür-Durchlass
+    // fürs Signal wurde in v0.16.2 auf Pats Wunsch wieder entfernt — Türen sind
+    // rein visuell.)
     for (const [id, ref] of this._refs) {
       const cp = svgEl('clipPath', { id: `fp-clip-${id}` });
       cp.appendChild(svgEl('path', { d: loopsToPath(ref.loops), 'clip-rule': 'evenodd' }));
-      for (const dr of c.doors) {
-        // Blende exakt in Türbreite: Mittelkreis spannt genau die Öffnung
-        // (r = L/2, endet an den Türpfosten), die beiden versetzten Kreise
-        // (d = 0.6L, r = 0.78L) schneiden die Wandlinie mit Halbbreite
-        // sqrt(r²−d²) = 0.5L — nie breiter als die Tür, aber wellenförmig
-        // bis ~1.4L in den Nachbarraum.
-        const [x1, y1] = dr.from, [x2, y2] = dr.to;
-        const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
-        const L = Math.hypot(x2 - x1, y2 - y1) || 1;
-        const nx = -(y2 - y1) / L, ny = (x2 - x1) / L;
-        cp.appendChild(svgEl('circle', { cx: mx, cy: my, r: L / 2 }));
-        for (const s of [1, -1]) {
-          cp.appendChild(svgEl('circle', {
-            cx: mx + nx * 0.6 * L * s, cy: my + ny * 0.6 * L * s, r: 0.78 * L,
-          }));
-        }
-      }
       defs.appendChild(cp);
     }
     svg.appendChild(defs);
