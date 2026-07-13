@@ -90,6 +90,7 @@
     <button class="tool" data-tool="sprinkler" title="Bewässerung platzieren">💦 Wasser</button>
     <button class="tool" data-tool="ac" title="Klimaanlage platzieren">❄️ Klima</button>
     <button class="tool" data-tool="camera" title="Kamera platzieren (Blickkegel + Klick-Video)">📹 Kamera</button>
+    <button class="tool" data-tool="ap" title="WLAN-Access-Point platzieren (Kabel-Nr. im Panel)">📶 AP</button>
     <button class="tool" data-tool="tree" title="Baum platzieren">🌳 Baum</button>
     <button class="tool" data-tool="hedge" title="Hecke ziehen (auch schräg)">🌿 Hecke</button>
     <button class="tool" data-tool="plant" title="Pflanze platzieren">🪴 Pflanze</button>
@@ -150,8 +151,10 @@
       <div class="field" id="dSizeRow" hidden><label>Größe (Radius bzw. Hecken-Dicke, px)</label>
         <input type="number" id="dSize" step="2" min="4" max="240"></div>
       <div class="field"><label>Name (Tooltip, optional)</label><input type="text" id="dName"></div>
-      <div class="field" id="dDirRow" hidden><label>Luftstrom-Richtung (° · 0=→ 90=↓ 180=← 270=↑)</label>
+      <div class="field" id="dDirRow" hidden><label>Richtung (° · 0=→ 90=↓ 180=← 270=↑)</label>
         <input type="number" id="dDirection" step="15" min="0" max="359"></div>
+      <div class="field" id="dCableRow" hidden><label>Kabel-Nr. (z. B. B12)</label>
+        <input type="text" id="dCable" placeholder="B12"></div>
       <div class="hint">Verschieben: ziehen · Löschen: ⌫</div>
       <button class="act" id="dDelete" style="color:#c22">Gerät löschen</button>
     </div>
@@ -219,6 +222,7 @@ const DEVICE_ICONS = {
   ac: 'M6.59,0.66C8.93,-1.15 11.47,1.06 12.04,4.5C12.47,4.5 12.89,4.62 13.27,4.84C13.79,4.24 14.25,3.42 14.07,2.5C13.65,0.35 16.06,-1.39 18.35,1.58C20.16,3.92 17.95,6.46 14.5,7.03C14.5,7.46 14.39,7.89 14.16,8.27C14.76,8.78 15.58,9.24 16.5,9.06C18.63,8.64 20.38,11.04 17.41,13.34C15.07,15.15 12.53,12.94 11.96,9.5C11.53,9.5 11.11,9.37 10.74,9.15C10.22,9.75 9.75,10.58 9.93,11.5C10.35,13.64 7.94,15.39 5.65,12.42C3.83,10.07 6.05,7.53 9.5,6.97C9.5,6.54 9.63,6.12 9.85,5.74C9.25,5.23 8.43,4.76 7.5,4.94C5.37,5.36 3.62,2.96 6.59,0.66M5,16H7A2,2 0 0,1 9,18V24H7V22H5V24H3V18A2,2 0 0,1 5,16M5,18V20H7V18H5M12.93,16H15L12.07,24H10L12.93,16M18,16H21V18H18V22H21V24H18A2,2 0 0,1 16,22V18A2,2 0 0,1 18,16Z',
   camera: 'M6.03 12.03L8.03 15.5L5.5 18.68L2 12.62L6.03 12.03M17 18V15.29C17.88 14.9 18.5 14.03 18.5 13C18.5 12.43 18.3 11.9 17.97 11.5L19.94 10.35C20.95 9.76 21.3 8.47 20.71 7.46L19.33 5.06C18.74 4.05 17.45 3.7 16.44 4.28L8.31 9C7.36 9.53 7.03 10.75 7.58 11.71L9.08 14.31C9.63 15.26 10.86 15.59 11.81 15.04L13.69 13.96C13.94 14.55 14.41 15.03 15 15.29V18C15 19.1 15.9 20 17 20H22V18H17Z',
   sprinkler: 'M10 10H14V22H10V10M7 9H9V7H7V9M4 8H6V6H4V8M4 11H6V9H4V11M1 13H3V11H1V13M1 7H3V5H1V7M1 10H3V8H1V10M18 11H20V9H18V11M21 10H23V8H21V10M21 5V7H23V5H21M21 13H23V11H21V13M15 9H17V7H15V9M18 8H20V6H18V8M10 7H10.33L11 9H13L13.67 7H14V6H10V7Z',
+  ap: 'M4.93,4.93C3.12,6.74 2,9.24 2,12C2,14.76 3.12,17.26 4.93,19.07L6.34,17.66C4.89,16.22 4,14.22 4,12C4,9.79 4.89,7.78 6.34,6.34L4.93,4.93M19.07,4.93L17.66,6.34C19.11,7.78 20,9.79 20,12C20,14.22 19.11,16.22 17.66,17.66L19.07,19.07C20.88,17.26 22,14.76 22,12C22,9.24 20.88,6.74 19.07,4.93M7.76,7.76C6.67,8.85 6,10.35 6,12C6,13.65 6.67,15.15 7.76,16.24L9.17,14.83C8.45,14.11 8,13.11 8,12C8,10.89 8.45,9.89 9.17,9.17L7.76,7.76M16.24,7.76L14.83,9.17C15.55,9.89 16,10.89 16,12C16,13.11 15.55,14.11 14.83,14.83L16.24,16.24C17.33,15.15 18,13.65 18,12C18,10.35 17.33,8.85 16.24,7.76M12,10A2,2 0 0,0 10,12A2,2 0 0,0 12,14A2,2 0 0,0 14,12A2,2 0 0,0 12,10Z',
 };
 const devices = () => (floor().devices = floor().devices || []);
 const devById = (id) => devices().find((d) => d.id === id);
@@ -535,17 +539,20 @@ function renderSidebar() {
   const dv = anyById(devSel);
   dprops.hidden = !dv;
   if (dv) {
-    document.getElementById('dType').textContent = { light: '· Licht', cover: '· Store', switch: '· Steckdose', mower: '· Mähroboter', sprinkler: '· Bewässerung', ac: '· Klimaanlage', camera: '· Kamera', tree: '· Baum', hedge: '· Hecke', plant: '· Pflanze' }[dv.type] || '';
+    document.getElementById('dType').textContent = { light: '· Licht', cover: '· Store', switch: '· Steckdose', mower: '· Mähroboter', sprinkler: '· Bewässerung', ac: '· Klimaanlage', camera: '· Kamera', ap: '· WLAN-AP', tree: '· Baum', hedge: '· Hecke', plant: '· Pflanze' }[dv.type] || '';
     const isDecor = DECOR_TYPES.includes(dv.type);
+    const hasRange = dv.type === 'camera' || dv.type === 'ap';
     document.getElementById('dEntityRow').hidden = isDecor;
-    document.getElementById('dSizeRow').hidden = !isDecor && dv.type !== 'camera';
-    document.getElementById('dSize').value = dv.type === 'camera'
-      ? (dv.range || 130)
+    document.getElementById('dSizeRow').hidden = !isDecor && !hasRange;
+    document.getElementById('dSize').value = hasRange
+      ? (dv.range || (dv.type === 'ap' ? 110 : 130))
       : dv.size || (dv.type === 'tree' ? 24 : dv.type === 'hedge' ? 14 : 10);
     document.getElementById('dEntity').value = dv.entity || '';
     document.getElementById('dName').value = dv.name || '';
     document.getElementById('dDirRow').hidden = dv.type !== 'ac' && dv.type !== 'camera';
     document.getElementById('dDirection').value = dv.direction || 0;
+    document.getElementById('dCableRow').hidden = dv.type !== 'ap';
+    document.getElementById('dCable').value = dv.cable || '';
   }
   const multi = document.getElementById('multi');
   multi.hidden = selIds.length < 2;
@@ -600,7 +607,7 @@ svg.addEventListener('pointerdown', (ev) => {
     svg.setPointerCapture(ev.pointerId);
     return;
   }
-  if (['light', 'switch', 'mower', 'sprinkler', 'ac', 'camera', 'tree', 'plant'].includes(tool)) {
+  if (['light', 'switch', 'mower', 'sprinkler', 'ac', 'camera', 'ap', 'tree', 'plant'].includes(tool)) {
     const isDecor = DECOR_TYPES.includes(tool);
     const list = isDecor ? decor() : devices();
     const prefix = isDecor ? 'dec-' : 'dev-';
@@ -939,8 +946,13 @@ function deleteDevice(id) {
 document.getElementById('dSize').addEventListener('input', (ev) => {
   const dv = anyById(devSel); if (!dv) return;
   const v = parseInt(ev.target.value, 10);
-  const key = dv.type === 'camera' ? 'range' : 'size';
+  const key = dv.type === 'camera' || dv.type === 'ap' ? 'range' : 'size';
   if (Number.isFinite(v) && v >= 4) dv[key] = v; else delete dv[key];
+  persist(); render();
+});
+document.getElementById('dCable').addEventListener('input', (ev) => {
+  const dv = anyById(devSel); if (!dv) return;
+  if (ev.target.value) dv.cable = ev.target.value; else delete dv.cable;
   persist(); render();
 });
 document.getElementById('dDelete').onclick = () => devSel && deleteDevice(devSel);
@@ -1065,12 +1077,14 @@ function roomYaml(r) {
   return `  - {${parts.join(', ')}}`;
 }
 function deviceYaml(d) {
-  const parts = [`type: ${d.type}`, `entity: ${d.entity || 'TODO'}`];
+  const parts = [`type: ${d.type}`];
+  if (d.entity || d.type !== 'ap') parts.push(`entity: ${d.entity || 'TODO'}`);
   if (d.from) parts.push(`from: [${d.from.map(Math.round).join(', ')}]`, `to: [${d.to.map(Math.round).join(', ')}]`);
   else parts.push(`at: [${d.at.map(Math.round).join(', ')}]`);
   if (d.direction) parts.push(`direction: ${d.direction}`);
   if (d.range) parts.push(`range: ${d.range}`);
   if (d.fov) parts.push(`fov: ${d.fov}`);
+  if (d.cable) parts.push(`cable: ${yq(d.cable)}`);
   if (d.name) parts.push(`name: ${yq(d.name)}`);
   return `  - {${parts.join(', ')}}`;
 }

@@ -5,7 +5,25 @@
  * No dependencies, no build step. MIT.
  */
 
-const VERSION = '0.14.0';
+const VERSION = '0.15.0';
+
+// Sichtbarkeits-Ebenen: global über alle Karten synchron (localStorage +
+// Custom-Event), umgeschaltet über die Legende unter dem Kartenkopf.
+const LAYERS = [
+  ['temp', 'Temperatur'],
+  ['light', 'Licht'],
+  ['cover', 'Storen'],
+  ['ac', 'Klima'],
+  ['camera', 'Video'],
+  ['wifi', 'WLAN'],
+  ['decor', 'Grün'],
+  ['other', 'Geräte'],
+];
+const LAYER_STORE_KEY = 'floorplan-temp-card-layers';
+const DEVICE_LAYER = {
+  light: 'light', cover: 'cover', ac: 'ac', camera: 'camera', ap: 'wifi',
+  switch: 'other', mower: 'other', sprinkler: 'other',
+};
 
 // Device icons placed on the plan (24×24 mdi paths)
 const DEVICE_ICONS = {
@@ -16,6 +34,7 @@ const DEVICE_ICONS = {
   sprinkler: 'M10 10H14V22H10V10M7 9H9V7H7V9M4 8H6V6H4V8M4 11H6V9H4V11M1 13H3V11H1V13M1 7H3V5H1V7M1 10H3V8H1V10M18 11H20V9H18V11M21 10H23V8H21V10M21 5V7H23V5H21M21 13H23V11H21V13M15 9H17V7H15V9M18 8H20V6H18V8M10 7H10.33L11 9H13L13.67 7H14V6H10V7Z',
   ac: 'M6.59,0.66C8.93,-1.15 11.47,1.06 12.04,4.5C12.47,4.5 12.89,4.62 13.27,4.84C13.79,4.24 14.25,3.42 14.07,2.5C13.65,0.35 16.06,-1.39 18.35,1.58C20.16,3.92 17.95,6.46 14.5,7.03C14.5,7.46 14.39,7.89 14.16,8.27C14.76,8.78 15.58,9.24 16.5,9.06C18.63,8.64 20.38,11.04 17.41,13.34C15.07,15.15 12.53,12.94 11.96,9.5C11.53,9.5 11.11,9.37 10.74,9.15C10.22,9.75 9.75,10.58 9.93,11.5C10.35,13.64 7.94,15.39 5.65,12.42C3.83,10.07 6.05,7.53 9.5,6.97C9.5,6.54 9.63,6.12 9.85,5.74C9.25,5.23 8.43,4.76 7.5,4.94C5.37,5.36 3.62,2.96 6.59,0.66M5,16H7A2,2 0 0,1 9,18V24H7V22H5V24H3V18A2,2 0 0,1 5,16M5,18V20H7V18H5M12.93,16H15L12.07,24H10L12.93,16M18,16H21V18H18V22H21V24H18A2,2 0 0,1 16,22V18A2,2 0 0,1 18,16Z',
   camera: 'M6.03 12.03L8.03 15.5L5.5 18.68L2 12.62L6.03 12.03M17 18V15.29C17.88 14.9 18.5 14.03 18.5 13C18.5 12.43 18.3 11.9 17.97 11.5L19.94 10.35C20.95 9.76 21.3 8.47 20.71 7.46L19.33 5.06C18.74 4.05 17.45 3.7 16.44 4.28L8.31 9C7.36 9.53 7.03 10.75 7.58 11.71L9.08 14.31C9.63 15.26 10.86 15.59 11.81 15.04L13.69 13.96C13.94 14.55 14.41 15.03 15 15.29V18C15 19.1 15.9 20 17 20H22V18H17Z',
+  ap: 'M4.93,4.93C3.12,6.74 2,9.24 2,12C2,14.76 3.12,17.26 4.93,19.07L6.34,17.66C4.89,16.22 4,14.22 4,12C4,9.79 4.89,7.78 6.34,6.34L4.93,4.93M19.07,4.93L17.66,6.34C19.11,7.78 20,9.79 20,12C20,14.22 19.11,16.22 17.66,17.66L19.07,19.07C20.88,17.26 22,14.76 22,12C22,9.24 20.88,6.74 19.07,4.93M7.76,7.76C6.67,8.85 6,10.35 6,12C6,13.65 6.67,15.15 7.76,16.24L9.17,14.83C8.45,14.11 8,13.11 8,12C8,10.89 8.45,9.89 9.17,9.17L7.76,7.76M16.24,7.76L14.83,9.17C15.55,9.89 16,10.89 16,12C16,13.11 15.55,14.11 14.83,14.83L16.24,16.24C17.33,15.15 18,13.65 18,12C18,10.35 17.33,8.85 16.24,7.76M12,10A2,2 0 0,0 10,12A2,2 0 0,0 12,14A2,2 0 0,0 14,12A2,2 0 0,0 12,10Z',
 };
 
 // Live badge next to the room name when the entity is a real sensor (domain
@@ -234,12 +253,13 @@ class FloorplanTempCard extends HTMLElement {
     if (config.devices !== undefined) {
       if (!Array.isArray(config.devices)) throw new Error('floorplan-temp-card: "devices" must be a list');
       for (const dv of config.devices) {
-        const okType = ['light', 'cover', 'switch', 'mower', 'sprinkler', 'ac', 'camera'].includes(dv.type);
+        const okType = ['light', 'cover', 'switch', 'mower', 'sprinkler', 'ac', 'camera', 'ap'].includes(dv.type);
         const hasAt = Array.isArray(dv.at) && dv.at.length === 2;
         const hasSegment = Array.isArray(dv.from) && dv.from.length === 2
           && Array.isArray(dv.to) && dv.to.length === 2;
-        // covers are wall segments (from/to); lights/switches are points (at)
-        if (!okType || !dv.entity || !(dv.type === 'cover' ? hasSegment || hasAt : hasAt)) {
+        // covers are wall segments (from/to); the rest are points (at).
+        // APs sind rein informativ — Entity optional (Kabel-Label reicht).
+        if (!okType || (!dv.entity && dv.type !== 'ap') || !(dv.type === 'cover' ? hasSegment || hasAt : hasAt)) {
           throw new Error('floorplan-temp-card: device needs type, entity and at:[x,y] (cover: from/to:[x,y])');
         }
       }
@@ -414,6 +434,9 @@ class FloorplanTempCard extends HTMLElement {
       @media (prefers-reduced-motion: reduce) {
         .live-icon .w1, .live-icon .w2, .room-value.pulse { animation: none; }
       }
+      /* layer visibility (classes toggled on ha-card by the legend) */
+      ${LAYERS.map(([k]) => `.hide-${k} [data-layer="${k}"] { display: none; }`).join('\n      ')}
+      .hide-temp path.wall:not(.garden):not(.paving):not(.stairs) { fill: var(--fp-neutral); }
       /* devices (lights, covers, sockets) placed on the plan */
       .device { cursor: pointer; touch-action: none; }
       .dim-ring { fill: none; stroke: #f0b429; stroke-width: 3; stroke-linecap: round;
@@ -460,6 +483,39 @@ class FloorplanTempCard extends HTMLElement {
                   stroke-width: 1; pointer-events: none; }
       .device.camera .device-icon { fill: #5d8fb8; }
       .cam-video { cursor: pointer; }
+      /* WLAN-AP: cyan coverage + expanding ripple rings */
+      .wifi-cover { pointer-events: none; }
+      .wifi-cover .wifi-fill { fill: url(#fp-wifi); }
+      .wifi-cover .wifi-ring {
+        fill: none; stroke: #35c3d0; stroke-width: 2; opacity: 0;
+        transform-box: fill-box; transform-origin: center;
+        animation: fp-wifi-ripple 3.6s ease-out infinite;
+      }
+      @keyframes fp-wifi-ripple {
+        0% { transform: scale(0.2); opacity: 0.65; }
+        70% { opacity: 0.18; }
+        100% { transform: scale(1); opacity: 0; }
+      }
+      .device.ap .device-icon { fill: #2b9aa8; }
+      .device.ap.off .device-icon { fill: var(--secondary-text-color, #8a94a0); }
+      .device-label {
+        text-anchor: middle; pointer-events: none; font-weight: 700;
+        fill: var(--secondary-text-color, #77808c);
+      }
+      .dark .device-label { fill: #8fdbe2; }
+      /* Legende: Ebenen ein-/ausblenden (global über alle Stockwerk-Karten) */
+      .legend { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 18px 0; }
+      .lg-chip {
+        display: inline-flex; align-items: center; gap: 6px;
+        border: 1px solid var(--divider-color, #d5dbe2); border-radius: 999px;
+        padding: 3px 10px; font: inherit; font-size: 11.5px; line-height: 1.4;
+        color: var(--secondary-text-color, #6b7480); cursor: pointer; background: transparent;
+      }
+      .lg-chip .dot { width: 8px; height: 8px; border-radius: 50%; }
+      .lg-chip.off { opacity: 0.45; }
+      .lg-chip.off .lg-label { text-decoration: line-through; }
+      .dark .lg-chip { border-color: #3c4a61; color: #aab6c5; }
+      @media (prefers-reduced-motion: reduce) { .wifi-cover .wifi-ring { animation: none; } }
       @keyframes fp-acflow { to { stroke-dashoffset: -23; } }
       @media (prefers-reduced-motion: reduce) {
         .ac-flow path, .device.active .device-bg, .device.watering .device-bg { animation: none; }
@@ -521,6 +577,41 @@ class FloorplanTempCard extends HTMLElement {
       if (sc.children.length) header.appendChild(sc);
       card.appendChild(header);
     }
+    // Legende: nur Ebenen anbieten, die auf diesem Stockwerk vorkommen
+    if (c.legend !== false) {
+      const present = new Set();
+      if (c.rooms.some((r) => r.entity && !r.outline && !r.surface)) present.add('temp');
+      for (const dvc of c.devices) present.add(DEVICE_LAYER[dvc.type]);
+      if (c.decor.length) present.add('decor');
+      const dots = {
+        temp: '#e39a4d', light: '#f0b429', cover: '#7d8b9d', ac: '#5db8ff',
+        camera: '#5d8fb8', wifi: '#35c3d0', decor: '#7fae7c', other: '#9aa7b4',
+      };
+      const chips = LAYERS.filter(([k]) => present.has(k));
+      if (chips.length > 1) {
+        const legend = document.createElement('div');
+        legend.className = 'legend';
+        for (const [key, label] of chips) {
+          const chip = document.createElement('button');
+          chip.className = 'lg-chip';
+          chip.dataset.key = key;
+          chip.title = `Ebene „${label}" ein-/ausblenden (alle Stockwerke)`;
+          const dot = document.createElement('span');
+          dot.className = 'dot';
+          dot.style.background = dots[key];
+          const lb = document.createElement('span');
+          lb.className = 'lg-label';
+          lb.textContent = label;
+          chip.append(dot, lb);
+          chip.addEventListener('click', () => {
+            const st = this._layerState();
+            this._setLayer(key, st[key] === false);
+          });
+          legend.appendChild(chip);
+        }
+        card.appendChild(legend);
+      }
+    }
     const pad = 6;
     const svg = svgEl('svg', { viewBox: `${-pad} ${-pad} ${w + 2 * pad} ${h + 2 * pad}` });
     this._refs.clear();
@@ -571,12 +662,13 @@ class FloorplanTempCard extends HTMLElement {
           pendingIcons.push({ liveIcon, nameText, lx, nameY, name: room.name });
         }
       }
+      if (liveIcon) liveIcon.setAttribute('data-layer', 'temp');
       if (showLabel && room.entity) {
-        valueText = svgEl('text', { x: lx, y: ly + fsValue * 0.45, class: 'room-value' });
+        valueText = svgEl('text', { x: lx, y: ly + fsValue * 0.45, class: 'room-value', 'data-layer': 'temp' });
         valueText.textContent = '–';
         g.appendChild(valueText);
         // Trend on its own line below the value: regular weight, no halo.
-        deltaText = svgEl('text', { x: lx, y: ly + fsValue * 0.45 + fsName * 1.6, class: 'delta' });
+        deltaText = svgEl('text', { x: lx, y: ly + fsValue * 0.45 + fsName * 1.6, class: 'delta', 'data-layer': 'temp' });
         g.appendChild(deltaText);
       }
       if (room.entity) {
@@ -593,11 +685,11 @@ class FloorplanTempCard extends HTMLElement {
         const bw = dc.size || 14;
         svg.appendChild(svgEl('line', {
           x1: dc.from[0], y1: dc.from[1], x2: dc.to[0], y2: dc.to[1],
-          class: 'decor-hedge', 'stroke-width': bw,
+          class: 'decor-hedge', 'stroke-width': bw, 'data-layer': 'decor',
         }));
       } else {
         const r = dc.size || (dc.type === 'tree' ? 24 : 10);
-        const g = svgEl('g', { class: 'decor-' + dc.type });
+        const g = svgEl('g', { class: 'decor-' + dc.type, 'data-layer': 'decor' });
         g.appendChild(svgEl('circle', { cx: dc.at[0], cy: dc.at[1], r, class: 'canopy' }));
         g.appendChild(svgEl('circle', {
           cx: dc.at[0] - r * 0.25, cy: dc.at[1] - r * 0.25, r: r * 0.55, class: 'canopy-hi',
@@ -613,6 +705,11 @@ class FloorplanTempCard extends HTMLElement {
     grad.appendChild(svgEl('stop', { offset: '55%', 'stop-color': '#f0b429', 'stop-opacity': '0.16' }));
     grad.appendChild(svgEl('stop', { offset: '100%', 'stop-color': '#f0b429', 'stop-opacity': '0' }));
     defs.appendChild(grad);
+    const wgrad = svgEl('radialGradient', { id: 'fp-wifi' });
+    wgrad.appendChild(svgEl('stop', { offset: '0%', 'stop-color': '#35c3d0', 'stop-opacity': '0.30' }));
+    wgrad.appendChild(svgEl('stop', { offset: '60%', 'stop-color': '#35c3d0', 'stop-opacity': '0.10' }));
+    wgrad.appendChild(svgEl('stop', { offset: '100%', 'stop-color': '#35c3d0', 'stop-opacity': '0' }));
+    defs.appendChild(wgrad);
     // surface patterns (CSS-classed contents → theme-aware)
     const pav = svgEl('pattern', { id: 'fp-paving', patternUnits: 'userSpaceOnUse', width: 36, height: 24 });
     pav.appendChild(svgEl('rect', { width: 36, height: 24, class: 'pav-bg' }));
@@ -639,7 +736,7 @@ class FloorplanTempCard extends HTMLElement {
     for (const dev of c.devices) {
       if (dev.type === 'cover' && dev.from && dev.to) {
         // real blind: bar along the window, fill grows with closed fraction
-        const g = svgEl('g', { class: 'device cover-bar' });
+        const g = svgEl('g', { class: 'device cover-bar', 'data-layer': 'cover' });
         const tip = svgEl('title');
         tip.textContent = dev.name || dev.entity;
         g.appendChild(tip);
@@ -658,13 +755,32 @@ class FloorplanTempCard extends HTMLElement {
       }
       const g = svgEl('g', {
         class: `device ${dev.type}`,
+        'data-layer': DEVICE_LAYER[dev.type] || 'other',
         transform: `translate(${dev.at[0]}, ${dev.at[1]})`,
       });
       const tip = svgEl('title');
       tip.textContent = dev.name || dev.entity;
       g.appendChild(tip);
       g.appendChild(svgEl('circle', { r: devR + 16, class: 'device-hit' }));
-      let ring = null, glow = null, flow = null;
+      let ring = null, glow = null, flow = null, wifiCover = null;
+      if (dev.type === 'ap') {
+        // WLAN-Abdeckung: cyan Glow + auslaufende Funkwellen, an den Raum geclippt
+        const range = dev.range || 110;
+        wifiCover = svgEl('g', { class: 'wifi-cover', 'data-layer': 'wifi' });
+        wifiCover.appendChild(svgEl('circle', { cx: dev.at[0], cy: dev.at[1], r: range, class: 'wifi-fill' }));
+        for (let i = 0; i < 3; i++) {
+          const rp = svgEl('circle', { cx: dev.at[0], cy: dev.at[1], r: range, class: 'wifi-ring' });
+          rp.style.animationDelay = `${i * 1.2}s`;
+          wifiCover.appendChild(rp);
+        }
+        for (const [roomId, ref] of this._refs) {
+          if (pointInLoops(dev.at, ref.loops)) {
+            wifiCover.setAttribute('clip-path', `url(#fp-clip-${roomId})`);
+            break;
+          }
+        }
+        glowLayer.appendChild(wifiCover);
+      }
       if (dev.type === 'camera') {
         // Blickkegel: direction (°, 0=Ost) ± fov/2, Radius = range
         const fov = dev.fov || 70, range = dev.range || 130;
@@ -675,12 +791,14 @@ class FloorplanTempCard extends HTMLElement {
         glowLayer.appendChild(svgEl('path', {
           d: `M${dev.at[0]},${dev.at[1]} L${p1[0]},${p1[1]} A${range},${range} 0 0,1 ${p2[0]},${p2[1]} Z`,
           class: 'cam-cone',
+          'data-layer': 'camera',
         }));
       }
       if (dev.type === 'ac') {
         // airflow streams pointing in `direction` (degrees, 0 = right/east)
         flow = svgEl('g', {
           class: 'ac-flow',
+          'data-layer': 'ac',
           transform: `translate(${dev.at[0]}, ${dev.at[1]}) rotate(${dev.direction || 0})`,
         });
         for (const sd of [
@@ -695,7 +813,7 @@ class FloorplanTempCard extends HTMLElement {
         // room lights up: soft radial glow + the containing room brightens
         glow = svgEl('circle', {
           cx: dev.at[0], cy: dev.at[1], r: devR * 5.5, class: 'light-glow',
-          fill: 'url(#fp-glow)',
+          fill: 'url(#fp-glow)', 'data-layer': 'light',
         });
         glow.style.opacity = '0';
         glowLayer.appendChild(glow);
@@ -720,6 +838,13 @@ class FloorplanTempCard extends HTMLElement {
         transform: `translate(${-12 * is}, ${-12 * is}) scale(${is})`,
         class: 'device-icon',
       }));
+      if (dev.type === 'ap' && dev.cable) {
+        // Kabel-Nummer (z. B. B12) direkt unter dem AP
+        const cable = svgEl('text', { x: 0, y: devR + 15, class: 'device-label' });
+        cable.style.fontSize = `${Math.max(9, devR * 0.62)}px`;
+        cable.textContent = dev.cable;
+        g.appendChild(cable);
+      }
       // tap = toggle · long-press = more-info · vertical drag on dimmable light = dim
       const ringC = 2 * Math.PI * (devR + 5);
       const setRing = (pct) => {
@@ -727,7 +852,7 @@ class FloorplanTempCard extends HTMLElement {
         ring.style.display = pct > 0 ? '' : 'none';
         ring.setAttribute('stroke-dasharray', `${(ringC * pct) / 100} ${ringC}`);
       };
-      this._devRefs.push({ dev, g, setRing, glow, flow });
+      this._devRefs.push({ dev, g, setRing, glow, flow, wifiCover });
       let pressTimer = null, longPressed = false, moved = false, dimming = false;
       let startY = 0, startPct = 0, lastSent = 0;
       g.addEventListener('pointerdown', (ev) => {
@@ -767,6 +892,8 @@ class FloorplanTempCard extends HTMLElement {
         if (moved) return;
         if (dev.type === 'camera') {
           this._toggleCamVideo(dev);
+        } else if (dev.type === 'ap') {
+          if (dev.entity) this._openMoreInfo(dev.entity); // ohne Entity rein informativ
         } else if (dev.type === 'cover' || dev.type === 'mower' || dev.type === 'ac') {
           this._openMoreInfo(dev.entity); // Mäher/Klima: Steuern bewusst nur im Dialog
         } else if (dev.type === 'sprinkler') {
@@ -783,6 +910,7 @@ class FloorplanTempCard extends HTMLElement {
     this.shadowRoot.appendChild(card);
     this._svg = svg;
     this._camOverlay = null;
+    this._applyLayers();
 
     const iconScale = (fsName * 0.95) / 24; // mdi paths are 24×24
     requestAnimationFrame(() => {
@@ -824,10 +952,17 @@ class FloorplanTempCard extends HTMLElement {
 
   _updateAll() {
     if (!this._hass || !this._config) return;
-    for (const { dev, g, fill, setRing, glow, flow } of this._devRefs || []) {
+    for (const { dev, g, fill, setRing, glow, flow, wifiCover } of this._devRefs || []) {
       const st = this._hass.states[dev.entity];
       const s = st ? st.state : 'unavailable';
-      g.classList.toggle('unavail', s === 'unavailable' || s === 'unknown');
+      g.classList.toggle('unavail', !!dev.entity && (s === 'unavailable' || s === 'unknown'));
+      if (dev.type === 'ap') {
+        // ohne Entity gilt der AP als aktiv (Kabel gesteckt); mit Entity zählt deren Zustand
+        const active = !dev.entity || !['off', 'unavailable', 'unknown', 'not_home'].includes(s);
+        g.classList.toggle('off', !active);
+        if (wifiCover) wifiCover.style.display = active ? '' : 'none';
+        continue;
+      }
       if (setRing) {
         setRing(s === 'on' && st.attributes && st.attributes.brightness
           ? Math.round(st.attributes.brightness / 2.55) : 0);
@@ -936,6 +1071,45 @@ class FloorplanTempCard extends HTMLElement {
     this._updateAll();
   }
 
+  // ---------- layer visibility ----------
+
+  connectedCallback() {
+    this._onLayersChanged = () => this._applyLayers();
+    window.addEventListener('fp-layers-changed', this._onLayersChanged);
+    window.addEventListener('storage', this._onLayersChanged);
+    this._applyLayers();
+  }
+
+  disconnectedCallback() {
+    window.removeEventListener('fp-layers-changed', this._onLayersChanged);
+    window.removeEventListener('storage', this._onLayersChanged);
+  }
+
+  _layerState() {
+    try { return JSON.parse(localStorage.getItem(LAYER_STORE_KEY)) || {}; } catch (e) { return {}; }
+  }
+
+  _setLayer(key, visible) {
+    const st = this._layerState();
+    st[key] = visible;
+    try { localStorage.setItem(LAYER_STORE_KEY, JSON.stringify(st)); } catch (e) { /* egal */ }
+    window.dispatchEvent(new CustomEvent('fp-layers-changed')); // informiert auch die anderen Stockwerk-Karten
+  }
+
+  _applyLayers() {
+    const card = this.shadowRoot && this.shadowRoot.querySelector('ha-card');
+    if (!card) return;
+    const st = this._layerState();
+    for (const [k] of LAYERS) {
+      const hidden = st[k] === false;
+      card.classList.toggle(`hide-${k}`, hidden);
+      if (k === 'camera' && hidden) this._closeCamVideo();
+    }
+    for (const chip of this.shadowRoot.querySelectorAll('.lg-chip')) {
+      chip.classList.toggle('off', st[chip.dataset.key] === false);
+    }
+  }
+
   _closeCamVideo() {
     if (this._camOverlay) {
       this._camOverlay.el.remove();
@@ -968,7 +1142,7 @@ class FloorplanTempCard extends HTMLElement {
       bbox = [dev.at[0] - range, dev.at[1] - range, range * 2, range * 2];
     }
     const fo = svgEl('foreignObject', {
-      x: bbox[0], y: bbox[1], width: bbox[2], height: bbox[3], class: 'cam-video',
+      x: bbox[0], y: bbox[1], width: bbox[2], height: bbox[3], class: 'cam-video', 'data-layer': 'camera',
     });
     if (clipRoom) fo.setAttribute('clip-path', `url(#fp-clip-${clipRoom})`);
     const img = document.createElement('img');
