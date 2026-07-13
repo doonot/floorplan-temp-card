@@ -70,7 +70,7 @@
 </head>
 <body>
 <header>
-  <h1>🏠 Grundriss-Editor <small style="font-size:11px;font-weight:400;opacity:.55">v0.11.0</small></h1>
+  <h1>🏠 Grundriss-Editor <small style="font-size:11px;font-weight:400;opacity:.55">v0.11.1</small></h1>
   <div class="tabs" id="tabs"></div>
   <div class="tools">
     <button class="tool on" data-tool="select" title="Auswählen/Verschieben (V)">✥ Auswahl</button>
@@ -103,6 +103,18 @@
       <span style="flex:1"><label>Breite</label><input type="number" id="cw" min="50" step="5"></span>
       <span style="flex:1"><label>Höhe</label><input type="number" id="ch" min="50" step="5"></span>
     </div>
+    <div id="bgCtrls" hidden>
+      <h2>Plan-Bild</h2>
+      <div class="field" style="display:flex;gap:6px">
+        <span style="flex:1"><label>Größe %</label><input type="number" id="bgScale" step="5" min="10" max="400" value="100"></span>
+        <span style="flex:1"><label>Rotation °</label><input type="number" id="bgRot" step="1" min="-180" max="180" value="0"></span>
+      </div>
+      <div class="field" style="display:flex;gap:6px">
+        <span style="flex:1"><label>X-Versatz</label><input type="number" id="bgX" step="5" value="0"></span>
+        <span style="flex:1"><label>Y-Versatz</label><input type="number" id="bgY" step="5" value="0"></span>
+      </div>
+      <div class="hint">Wirkt nur auf die Zeichenvorlage (Session, wird nicht exportiert). Rotation um die Bildmitte.</div>
+    </div>
     <h2>Räume <span id="roomCount" style="font-weight:400"></span></h2>
     <ul class="rooms" id="roomList"></ul>
     <div id="props" hidden>
@@ -121,7 +133,7 @@
       <div class="field" id="dEntityRow"><label>Entity (light.* / cover.* / switch.*)</label>
         <input type="text" id="dEntity" placeholder="light.licht_eg_entree_spots"></div>
       <div class="field" id="dSizeRow" hidden><label>Größe (Radius bzw. Hecken-Dicke, px)</label>
-        <input type="number" id="dSize" step="2" min="4" max="120"></div>
+        <input type="number" id="dSize" step="2" min="4" max="240"></div>
       <div class="field"><label>Name (Tooltip, optional)</label><input type="text" id="dName"></div>
       <div class="field" id="dDirRow" hidden><label>Luftstrom-Richtung (° · 0=→ 90=↓ 180=← 270=↑)</label>
         <input type="number" id="dDirection" step="15" min="0" max="359"></div>
@@ -212,6 +224,8 @@ function normalizeProject() {
 }
 normalizeProject();
 let bgImages = {}; // floorKey -> dataURL (session only, never exported)
+let bgTransform = {}; // floorKey -> {s: %, r: °, x, y} für die Zeichenvorlage
+const bgT = () => (bgTransform[floor().key] = bgTransform[floor().key] || { s: 100, r: 0, x: 0, y: 0 });
 let draft = null;  // {x0,y0,x1,y1} while dragging rect, or {points:[]} for poly
 let drag = null;   // move/resize/vertex/label drag state
 
@@ -322,8 +336,10 @@ function render() {
   svg.innerHTML = '';
 
   if (bgImages[f.key]) {
+    const t = bgT();
     const img = el('image', { id: 'bgimg', href: bgImages[f.key], x: 0, y: 0, width: w, height: h,
-      preserveAspectRatio: 'xMidYMid meet', opacity: document.getElementById('bgop').value / 100 });
+      preserveAspectRatio: 'xMidYMid meet', opacity: document.getElementById('bgop').value / 100,
+      transform: `translate(${t.x + w / 2} ${t.y + h / 2}) rotate(${t.r}) scale(${t.s / 100}) translate(${-w / 2} ${-h / 2})` });
     svg.appendChild(img);
   }
 
@@ -373,14 +389,24 @@ function render() {
     const sel = dc.id === devSel;
     if (dc.type === 'hedge') {
       const [x1, y1] = dc.from, [x2, y2] = dc.to;
-      svg.appendChild(el('line', { x1, y1, x2, y2, class: 'ed-hedge' + (sel ? ' dsel2' : ''), 'stroke-width': dc.size || 14, 'data-dev': dc.id }));
+      const bw = dc.size || 14;
+      svg.appendChild(el('line', { x1, y1, x2, y2, class: 'ed-hedge' + (sel ? ' dsel2' : ''), 'stroke-width': bw, 'data-dev': dc.id }));
       if (sel) {
         svg.appendChild(el('circle', { cx: x1, cy: y1, r: 6, class: 'vhandle', 'data-h': 'de0' }));
         svg.appendChild(el('circle', { cx: x2, cy: y2, r: 6, class: 'vhandle', 'data-h': 'de1' }));
+        // Dicken-Griff: senkrecht zur Segmentmitte — ziehen macht die Hecke zur Fläche
+        const len = Math.hypot(x2 - x1, y2 - y1) || 1;
+        const nx = -(y2 - y1) / len, ny = (x2 - x1) / len;
+        const mx = (x1 + x2) / 2 + nx * (bw / 2 + 6), my = (y1 + y2) / 2 + ny * (bw / 2 + 6);
+        svg.appendChild(el('rect', { x: mx - 5, y: my - 5, width: 10, height: 10, class: 'handle', 'data-h': 'dw' }));
       }
     } else {
       const r = dc.size || (dc.type === 'tree' ? 24 : 10);
       svg.appendChild(el('circle', { cx: dc.at[0], cy: dc.at[1], r, class: 'ed-canopy' + (sel ? ' dsel2' : ''), 'data-dev': dc.id }));
+      if (sel) {
+        // Radius-Griff rechts am Rand
+        svg.appendChild(el('circle', { cx: dc.at[0] + r, cy: dc.at[1], r: 6, class: 'vhandle', 'data-h': 'dr' }));
+      }
     }
   }
   for (const dv of devices()) {
@@ -432,6 +458,15 @@ function renderSidebar() {
     li.innerHTML = `<span>${r.name || r.id}</span><span class="e">${r.outline ? 'Umriss' : r.entity || '—'}</span>`;
     li.onclick = (ev) => { toggleSel(r.id, ev.shiftKey); render(); };
     ul.appendChild(li);
+  }
+  const bgc = document.getElementById('bgCtrls');
+  bgc.hidden = !bgImages[f.key];
+  if (!bgc.hidden) {
+    const t = bgT();
+    document.getElementById('bgScale').value = t.s;
+    document.getElementById('bgRot').value = t.r;
+    document.getElementById('bgX').value = t.x;
+    document.getElementById('bgY').value = t.y;
   }
   const props = document.getElementById('props');
   const r = roomById(selId);
@@ -520,7 +555,7 @@ svg.addEventListener('pointerdown', (ev) => {
   }
   // select tool — device endpoint handles, then devices, then rooms
   const dvSel = anyById(devSel);
-  if (h && (h === 'de0' || h === 'de1') && dvSel) {
+  if (h && (h === 'de0' || h === 'de1' || h === 'dw' || h === 'dr') && dvSel) {
     drag = { type: h, start: [x, y], orig: JSON.parse(JSON.stringify(dvSel)) };
     svg.setPointerCapture(ev.pointerId);
     return;
@@ -607,6 +642,26 @@ svg.addEventListener('pointermove', (ev) => {
   if (drag.type === 'de0' || drag.type === 'de1') {
     const dv = anyById(devSel);
     if (dv && dv.from) { dv[drag.type === 'de0' ? 'from' : 'to'] = [x, y]; render(); }
+    return;
+  }
+  if (drag.type === 'dw') {
+    // Hecken-Dicke = 2 × Abstand des Zeigers zur Segmentlinie
+    const dv = anyById(devSel);
+    if (dv && dv.from) {
+      const [x1, y1] = dv.from, [x2, y2] = dv.to;
+      const len = Math.hypot(x2 - x1, y2 - y1) || 1;
+      const dist = Math.abs((x2 - x1) * (y1 - y) - (x1 - x) * (y2 - y1)) / len;
+      dv.size = Math.max(6, Math.min(240, Math.round(dist * 2)));
+      render();
+    }
+    return;
+  }
+  if (drag.type === 'dr') {
+    const dv = anyById(devSel);
+    if (dv && dv.at) {
+      dv.size = Math.max(4, Math.min(240, Math.round(Math.hypot(x - dv.at[0], y - dv.at[1]))));
+      render();
+    }
     return;
   }
   const r = roomById(selId);
@@ -839,6 +894,12 @@ document.getElementById('bgfile').addEventListener('change', (ev) => {
   rd.readAsDataURL(file);
 });
 document.getElementById('bgop').addEventListener('input', render);
+for (const [id, key] of [['bgScale', 's'], ['bgRot', 'r'], ['bgX', 'x'], ['bgY', 'y']]) {
+  document.getElementById(id).addEventListener('input', (ev) => {
+    const v = parseFloat(ev.target.value);
+    if (Number.isFinite(v)) { bgT()[key] = v; render(); document.getElementById(id).focus(); }
+  });
+}
 
 // ---------- project save/load ----------
 document.getElementById('saveProj').onclick = () => {
