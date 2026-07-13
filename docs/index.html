@@ -68,12 +68,15 @@
   .ed-hedge{stroke:#7fae7c;stroke-linecap:round;cursor:move}
   .dsel2{stroke:var(--sel) !important;stroke-width:3}
   line.ed-hedge.dsel2{stroke:#5d8f5b !important;filter:drop-shadow(0 0 3px var(--sel))}
-  #bgimg{pointer-events:none}
+  #bgimg{cursor:move}
+  .bgframe{fill:none;stroke:var(--sel);stroke-width:1.5;stroke-dasharray:6 4;pointer-events:none}
+  .bghandle{fill:#fff;stroke:var(--sel);stroke-width:2;cursor:nwse-resize}
+  .bgrotate{fill:var(--sel);cursor:grab}
 </style>
 </head>
 <body>
 <header>
-  <h1>🏠 Grundriss-Editor <small style="font-size:11px;font-weight:400;opacity:.55">v0.11.1</small></h1>
+  <h1>🏠 Grundriss-Editor <small style="font-size:11px;font-weight:400;opacity:.55">v0.12.1</small></h1>
   <div class="tabs" id="tabs"></div>
   <div class="tools">
     <button class="tool on" data-tool="select" title="Auswählen/Verschieben (V)">✥ Auswahl</button>
@@ -116,7 +119,7 @@
         <span style="flex:1"><label>X-Versatz</label><input type="number" id="bgX" step="5" value="0"></span>
         <span style="flex:1"><label>Y-Versatz</label><input type="number" id="bgY" step="5" value="0"></span>
       </div>
-      <div class="hint">Wirkt nur auf die Zeichenvorlage (Session, wird nicht exportiert). Rotation um die Bildmitte.</div>
+      <div class="hint">Tipp: Bild direkt anklicken → ziehen = verschieben, Eck-Griff = Größe, runder Griff oben = drehen (rastet bei 0°/90°). Felder hier für Feinwerte.</div>
     </div>
     <h2>Räume <span id="roomCount" style="font-weight:400"></span></h2>
     <ul class="rooms" id="roomList"></ul>
@@ -199,7 +202,7 @@ try {
 let tool = 'select';
 let selId = null;   // genau ein Raum ausgewählt (Eigenschaften-Panel)
 let selIds = [];    // volle Auswahl (Shift-Klick = Mehrfachauswahl zum Vereinen)
-function setSel(ids) { selIds = ids; selId = ids.length === 1 ? ids[0] : null; if (ids.length) devSel = null; selAll = false; }
+function setSel(ids) { selIds = ids; selId = ids.length === 1 ? ids[0] : null; if (ids.length) devSel = null; selAll = false; bgSel = false; }
 function toggleSel(id, additive) {
   if (!additive) return setSel([id]);
   setSel(selIds.includes(id) ? selIds.filter((x) => x !== id) : [...selIds, id]);
@@ -236,6 +239,19 @@ normalizeProject();
 let bgImages = {}; // floorKey -> dataURL (session only, never exported)
 let bgTransform = {}; // floorKey -> {s: %, r: °, x, y} für die Zeichenvorlage
 const bgT = () => (bgTransform[floor().key] = bgTransform[floor().key] || { s: 100, r: 0, x: 0, y: 0 });
+let bgSel = false; // Plan-Bild ausgewählt (Rahmen + Griffe)
+// Ecken des transformierten Bilds (für Rahmen + Griffe)
+function bgCorners() {
+  const [w, h] = floor().canvas;
+  const t = bgT();
+  const cx = t.x + w / 2, cy = t.y + h / 2;
+  const rad = (t.r * Math.PI) / 180, s = t.s / 100;
+  const rot = ([dx, dy]) => [cx + s * (dx * Math.cos(rad) - dy * Math.sin(rad)), cy + s * (dx * Math.sin(rad) + dy * Math.cos(rad))];
+  return {
+    c: [cx, cy],
+    pts: [rot([-w / 2, -h / 2]), rot([w / 2, -h / 2]), rot([w / 2, h / 2]), rot([-w / 2, h / 2])],
+  };
+}
 let draft = null;  // {x0,y0,x1,y1} while dragging rect, or {points:[]} for poly
 let drag = null;   // move/resize/vertex/label drag state
 
@@ -443,6 +459,19 @@ function render() {
   if (draft && draft.devLine) {
     svg.appendChild(el('line', { x1: draft.x0, y1: draft.y0, x2: draft.x1, y2: draft.y1, class: 'cover-border', 'stroke-width': 12, opacity: 0.6 }));
   }
+  if (bgSel && bgImages[f.key]) {
+    const { pts } = bgCorners();
+    svg.appendChild(el('polygon', { points: pts.map((p) => p.join(',')).join(' '), class: 'bgframe' }));
+    // Skalier-Griff an der Ecke unten rechts, Dreh-Griff über der Oberkante
+    svg.appendChild(el('rect', { x: pts[2][0] - 6, y: pts[2][1] - 6, width: 12, height: 12, class: 'bghandle', 'data-h': 'bgscale' }));
+    const topMid = [(pts[0][0] + pts[1][0]) / 2, (pts[0][1] + pts[1][1]) / 2];
+    const { c } = bgCorners();
+    const vx = topMid[0] - c[0], vy = topMid[1] - c[1];
+    const vlen = Math.hypot(vx, vy) || 1;
+    const rx = topMid[0] + (vx / vlen) * 26, ry = topMid[1] + (vy / vlen) * 26;
+    svg.appendChild(el('line', { x1: topMid[0], y1: topMid[1], x2: rx, y2: ry, class: 'bgframe' }));
+    svg.appendChild(el('circle', { cx: rx, cy: ry, r: 7, class: 'bgrotate', 'data-h': 'bgrot' }));
+  }
 
   if (draft) {
     if (draft.points) {
@@ -529,6 +558,12 @@ function svgPoint(ev) {
   const p = pt.matrixTransform(svg.getScreenCTM().inverse());
   return [snap(p.x), snap(p.y)];
 }
+function svgPointRaw(ev) {
+  const pt = svg.createSVGPoint();
+  pt.x = ev.clientX; pt.y = ev.clientY;
+  const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+  return [p.x, p.y];
+}
 
 svg.addEventListener('pointerdown', (ev) => {
   const [x, y] = svgPoint(ev);
@@ -565,7 +600,21 @@ svg.addEventListener('pointerdown', (ev) => {
     render();
     return;
   }
-  // select tool — device endpoint handles, then devices, then rooms
+  // select tool — Plan-Bild-Griffe zuerst, dann Geräte, dann Räume
+  if (h === 'bgscale' || h === 'bgrot') {
+    const { c } = bgCorners();
+    drag = { type: h, start: svgPointRaw(ev), orig: { ...bgT() }, center: c };
+    svg.setPointerCapture(ev.pointerId);
+    return;
+  }
+  if (ev.target.id === 'bgimg') {
+    setSel([]);
+    bgSel = true;
+    drag = { type: 'bgmove', start: [x, y], orig: { ...bgT() } };
+    svg.setPointerCapture(ev.pointerId);
+    render();
+    return;
+  }
   const dvSel = anyById(devSel);
   if (h && (h === 'de0' || h === 'de1' || h === 'dw' || h === 'dr') && dvSel) {
     drag = { type: h, start: [x, y], orig: JSON.parse(JSON.stringify(dvSel)) };
@@ -617,6 +666,32 @@ svg.addEventListener('pointermove', (ev) => {
   if (draft && !draft.points) { draft.x1 = x; draft.y1 = y; render(); return; }
   if (draft && draft.points) { draft.cursor = [x, y]; render(); return; }
   if (!drag) return;
+  if (drag.type === 'bgmove') {
+    const t = bgT();
+    t.x = drag.orig.x + (x - drag.start[0]);
+    t.y = drag.orig.y + (y - drag.start[1]);
+    render();
+    return;
+  }
+  if (drag.type === 'bgscale') {
+    const [rx, ry] = svgPointRaw(ev);
+    const d0 = Math.hypot(drag.start[0] - drag.center[0], drag.start[1] - drag.center[1]) || 1;
+    const d1 = Math.hypot(rx - drag.center[0], ry - drag.center[1]);
+    bgT().s = Math.max(10, Math.min(400, Math.round(drag.orig.s * (d1 / d0))));
+    render();
+    return;
+  }
+  if (drag.type === 'bgrot') {
+    const [rx, ry] = svgPointRaw(ev);
+    const a0 = Math.atan2(drag.start[1] - drag.center[1], drag.start[0] - drag.center[0]);
+    const a1 = Math.atan2(ry - drag.center[1], rx - drag.center[0]);
+    let r = drag.orig.r + ((a1 - a0) * 180) / Math.PI;
+    r = ((Math.round(r) + 540) % 360) - 180; // auf ±180 normalisieren
+    for (const snapAng of [-180, -90, 0, 90, 180]) if (Math.abs(r - snapAng) <= 4) r = snapAng === -180 ? 180 : snapAng;
+    bgT().r = r;
+    render();
+    return;
+  }
   if (drag.type === 'multimove') {
     const dx = snap(x - drag.start[0]), dy = snap(y - drag.start[1]);
     for (const ro of drag.orig.rooms) {
@@ -758,7 +833,7 @@ window.addEventListener('keydown', (ev) => {
     return;
   }
   if (ev.key === 'Enter') finishPoly();
-  if (ev.key === 'Escape') { draft = null; setSel([]); render(); }
+  if (ev.key === 'Escape') { draft = null; setSel([]); bgSel = false; render(); }
   if ((ev.key === 'Backspace' || ev.key === 'Delete') && devSel) { deleteDevice(devSel); return; }
   if ((ev.key === 'Backspace' || ev.key === 'Delete') && selId) { deleteRoom(selId); }
   if (ev.key === 'v') setTool('select');
