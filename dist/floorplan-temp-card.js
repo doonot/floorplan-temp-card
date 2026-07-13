@@ -5,7 +5,7 @@
  * No dependencies, no build step. MIT.
  */
 
-const VERSION = '0.13.0';
+const VERSION = '0.14.0';
 
 // Device icons placed on the plan (24×24 mdi paths)
 const DEVICE_ICONS = {
@@ -15,6 +15,7 @@ const DEVICE_ICONS = {
   mower: 'M1 14V5H13C18.5 5 23 9.5 23 15V17H20.83C20.42 18.17 19.31 19 18 19C16.69 19 15.58 18.17 15.17 17H10C9.09 18.21 7.64 19 6 19C3.24 19 1 16.76 1 14M6 11C4.34 11 3 12.34 3 14C3 15.66 4.34 17 6 17C7.66 17 9 15.66 9 14C9 12.34 7.66 11 6 11M15 10V12H20.25C19.92 11.27 19.5 10.6 19 10H15Z',
   sprinkler: 'M10 10H14V22H10V10M7 9H9V7H7V9M4 8H6V6H4V8M4 11H6V9H4V11M1 13H3V11H1V13M1 7H3V5H1V7M1 10H3V8H1V10M18 11H20V9H18V11M21 10H23V8H21V10M21 5V7H23V5H21M21 13H23V11H21V13M15 9H17V7H15V9M18 8H20V6H18V8M10 7H10.33L11 9H13L13.67 7H14V6H10V7Z',
   ac: 'M6.59,0.66C8.93,-1.15 11.47,1.06 12.04,4.5C12.47,4.5 12.89,4.62 13.27,4.84C13.79,4.24 14.25,3.42 14.07,2.5C13.65,0.35 16.06,-1.39 18.35,1.58C20.16,3.92 17.95,6.46 14.5,7.03C14.5,7.46 14.39,7.89 14.16,8.27C14.76,8.78 15.58,9.24 16.5,9.06C18.63,8.64 20.38,11.04 17.41,13.34C15.07,15.15 12.53,12.94 11.96,9.5C11.53,9.5 11.11,9.37 10.74,9.15C10.22,9.75 9.75,10.58 9.93,11.5C10.35,13.64 7.94,15.39 5.65,12.42C3.83,10.07 6.05,7.53 9.5,6.97C9.5,6.54 9.63,6.12 9.85,5.74C9.25,5.23 8.43,4.76 7.5,4.94C5.37,5.36 3.62,2.96 6.59,0.66M5,16H7A2,2 0 0,1 9,18V24H7V22H5V24H3V18A2,2 0 0,1 5,16M5,18V20H7V18H5M12.93,16H15L12.07,24H10L12.93,16M18,16H21V18H18V22H21V24H18A2,2 0 0,1 16,22V18A2,2 0 0,1 18,16Z',
+  camera: 'M6.03 12.03L8.03 15.5L5.5 18.68L2 12.62L6.03 12.03M17 18V15.29C17.88 14.9 18.5 14.03 18.5 13C18.5 12.43 18.3 11.9 17.97 11.5L19.94 10.35C20.95 9.76 21.3 8.47 20.71 7.46L19.33 5.06C18.74 4.05 17.45 3.7 16.44 4.28L8.31 9C7.36 9.53 7.03 10.75 7.58 11.71L9.08 14.31C9.63 15.26 10.86 15.59 11.81 15.04L13.69 13.96C13.94 14.55 14.41 15.03 15 15.29V18C15 19.1 15.9 20 17 20H22V18H17Z',
 };
 
 // Live badge next to the room name when the entity is a real sensor (domain
@@ -233,7 +234,7 @@ class FloorplanTempCard extends HTMLElement {
     if (config.devices !== undefined) {
       if (!Array.isArray(config.devices)) throw new Error('floorplan-temp-card: "devices" must be a list');
       for (const dv of config.devices) {
-        const okType = ['light', 'cover', 'switch', 'mower', 'sprinkler', 'ac'].includes(dv.type);
+        const okType = ['light', 'cover', 'switch', 'mower', 'sprinkler', 'ac', 'camera'].includes(dv.type);
         const hasAt = Array.isArray(dv.at) && dv.at.length === 2;
         const hasSegment = Array.isArray(dv.from) && dv.from.length === 2
           && Array.isArray(dv.to) && dv.to.length === 2;
@@ -454,6 +455,11 @@ class FloorplanTempCard extends HTMLElement {
         animation: fp-acflow 1.1s linear infinite;
       }
       .ac-flow { pointer-events: none; transition: opacity 0.5s ease; }
+      /* camera: view cone + inline video overlay */
+      .cam-cone { fill: rgba(93, 184, 255, 0.10); stroke: rgba(93, 184, 255, 0.35);
+                  stroke-width: 1; pointer-events: none; }
+      .device.camera .device-icon { fill: #5d8fb8; }
+      .cam-video { cursor: pointer; }
       @keyframes fp-acflow { to { stroke-dashoffset: -23; } }
       @media (prefers-reduced-motion: reduce) {
         .ac-flow path, .device.active .device-bg, .device.watering .device-bg { animation: none; }
@@ -659,6 +665,18 @@ class FloorplanTempCard extends HTMLElement {
       g.appendChild(tip);
       g.appendChild(svgEl('circle', { r: devR + 16, class: 'device-hit' }));
       let ring = null, glow = null, flow = null;
+      if (dev.type === 'camera') {
+        // Blickkegel: direction (°, 0=Ost) ± fov/2, Radius = range
+        const fov = dev.fov || 70, range = dev.range || 130;
+        const mid = ((dev.direction || 0) * Math.PI) / 180;
+        const a1 = mid - (fov * Math.PI) / 360, a2 = mid + (fov * Math.PI) / 360;
+        const p1 = [dev.at[0] + range * Math.cos(a1), dev.at[1] + range * Math.sin(a1)];
+        const p2 = [dev.at[0] + range * Math.cos(a2), dev.at[1] + range * Math.sin(a2)];
+        glowLayer.appendChild(svgEl('path', {
+          d: `M${dev.at[0]},${dev.at[1]} L${p1[0]},${p1[1]} A${range},${range} 0 0,1 ${p2[0]},${p2[1]} Z`,
+          class: 'cam-cone',
+        }));
+      }
       if (dev.type === 'ac') {
         // airflow streams pointing in `direction` (degrees, 0 = right/east)
         flow = svgEl('g', {
@@ -747,7 +765,9 @@ class FloorplanTempCard extends HTMLElement {
         if (longPressed) return;
         if (dimming) { this._callDim(dev.entity, this._dimPct); return; }
         if (moved) return;
-        if (dev.type === 'cover' || dev.type === 'mower' || dev.type === 'ac') {
+        if (dev.type === 'camera') {
+          this._toggleCamVideo(dev);
+        } else if (dev.type === 'cover' || dev.type === 'mower' || dev.type === 'ac') {
           this._openMoreInfo(dev.entity); // Mäher/Klima: Steuern bewusst nur im Dialog
         } else if (dev.type === 'sprinkler') {
           this._toggleSprinkler(dev.entity);
@@ -761,6 +781,8 @@ class FloorplanTempCard extends HTMLElement {
 
     card.appendChild(svg);
     this.shadowRoot.appendChild(card);
+    this._svg = svg;
+    this._camOverlay = null;
 
     const iconScale = (fsName * 0.95) / 24; // mdi paths are 24×24
     requestAnimationFrame(() => {
@@ -912,6 +934,51 @@ class FloorplanTempCard extends HTMLElement {
       for (const ent of entities) this._deltas.set(ent, null);
     }
     this._updateAll();
+  }
+
+  _closeCamVideo() {
+    if (this._camOverlay) {
+      this._camOverlay.el.remove();
+      this._camOverlay = null;
+    }
+  }
+
+  _toggleCamVideo(dev) {
+    if (this._camOverlay && this._camOverlay.entity === dev.entity) { this._closeCamVideo(); return; }
+    this._closeCamVideo();
+    if (!this._hass || !this._svg) return;
+    const st = this._hass.states[dev.entity];
+    if (!st) return;
+    const token = st.attributes && st.attributes.access_token;
+    const src = `/api/camera_proxy_stream/${dev.entity}${token ? `?token=${token}` : ''}`;
+    // Video in den Raum legen, in dem die Kamera steht (an die Raumform geclippt);
+    // sonst in die Kegel-Umgebung.
+    let bbox = null, clipRoom = null;
+    for (const [roomId, ref] of this._refs) {
+      if (pointInLoops(dev.at, ref.loops)) {
+        clipRoom = roomId;
+        const pts = ref.loops.flat();
+        const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+        bbox = [Math.min(...xs), Math.min(...ys), Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)];
+        break;
+      }
+    }
+    if (!bbox) {
+      const range = dev.range || 130;
+      bbox = [dev.at[0] - range, dev.at[1] - range, range * 2, range * 2];
+    }
+    const fo = svgEl('foreignObject', {
+      x: bbox[0], y: bbox[1], width: bbox[2], height: bbox[3], class: 'cam-video',
+    });
+    if (clipRoom) fo.setAttribute('clip-path', `url(#fp-clip-${clipRoom})`);
+    const img = document.createElement('img');
+    img.src = src;
+    img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
+    img.alt = dev.name || dev.entity;
+    fo.appendChild(img);
+    fo.addEventListener('click', (ev) => { ev.stopPropagation(); this._closeCamVideo(); });
+    this._svg.appendChild(fo);
+    this._camOverlay = { entity: dev.entity, el: fo };
   }
 
   _toggleSprinkler(entity) {

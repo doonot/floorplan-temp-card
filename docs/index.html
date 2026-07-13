@@ -64,6 +64,7 @@
   .room-shape.surf-garden{fill:#b5d5a7 !important;fill-opacity:.8}
   .room-shape.surf-paving{fill:#d9dde2 !important;fill-opacity:.9}
   .room-shape.surf-stairs{fill:#e6eaef !important;fill-opacity:.9}
+  .ed-cone{fill:rgba(93,184,255,.12);stroke:rgba(93,184,255,.5);stroke-width:1;pointer-events:none}
   .ed-canopy{fill:#7fae7c;stroke:#5d8f5b;stroke-width:1.5;cursor:move}
   .ed-hedge{stroke:#7fae7c;stroke-linecap:round;cursor:move}
   .dsel2{stroke:var(--sel) !important;stroke-width:3}
@@ -88,6 +89,7 @@
     <button class="tool" data-tool="mower" title="Mähroboter platzieren">🤖 Mäher</button>
     <button class="tool" data-tool="sprinkler" title="Bewässerung platzieren">💦 Wasser</button>
     <button class="tool" data-tool="ac" title="Klimaanlage platzieren">❄️ Klima</button>
+    <button class="tool" data-tool="camera" title="Kamera platzieren (Blickkegel + Klick-Video)">📹 Kamera</button>
     <button class="tool" data-tool="tree" title="Baum platzieren">🌳 Baum</button>
     <button class="tool" data-tool="hedge" title="Hecke ziehen (auch schräg)">🌿 Hecke</button>
     <button class="tool" data-tool="plant" title="Pflanze platzieren">🪴 Pflanze</button>
@@ -215,6 +217,7 @@ const DEVICE_ICONS = {
   switch: 'M16,7V3H14V7H10V3H8V7C8,7 7,8 7,9V14.5L10.5,18V21H13.5V18L17,14.5V9C17,8 16,7 16,7Z',
   mower: 'M1 14V5H13C18.5 5 23 9.5 23 15V17H20.83C20.42 18.17 19.31 19 18 19C16.69 19 15.58 18.17 15.17 17H10C9.09 18.21 7.64 19 6 19C3.24 19 1 16.76 1 14M6 11C4.34 11 3 12.34 3 14C3 15.66 4.34 17 6 17C7.66 17 9 15.66 9 14C9 12.34 7.66 11 6 11M15 10V12H20.25C19.92 11.27 19.5 10.6 19 10H15Z',
   ac: 'M6.59,0.66C8.93,-1.15 11.47,1.06 12.04,4.5C12.47,4.5 12.89,4.62 13.27,4.84C13.79,4.24 14.25,3.42 14.07,2.5C13.65,0.35 16.06,-1.39 18.35,1.58C20.16,3.92 17.95,6.46 14.5,7.03C14.5,7.46 14.39,7.89 14.16,8.27C14.76,8.78 15.58,9.24 16.5,9.06C18.63,8.64 20.38,11.04 17.41,13.34C15.07,15.15 12.53,12.94 11.96,9.5C11.53,9.5 11.11,9.37 10.74,9.15C10.22,9.75 9.75,10.58 9.93,11.5C10.35,13.64 7.94,15.39 5.65,12.42C3.83,10.07 6.05,7.53 9.5,6.97C9.5,6.54 9.63,6.12 9.85,5.74C9.25,5.23 8.43,4.76 7.5,4.94C5.37,5.36 3.62,2.96 6.59,0.66M5,16H7A2,2 0 0,1 9,18V24H7V22H5V24H3V18A2,2 0 0,1 5,16M5,18V20H7V18H5M12.93,16H15L12.07,24H10L12.93,16M18,16H21V18H18V22H21V24H18A2,2 0 0,1 16,22V18A2,2 0 0,1 18,16Z',
+  camera: 'M6.03 12.03L8.03 15.5L5.5 18.68L2 12.62L6.03 12.03M17 18V15.29C17.88 14.9 18.5 14.03 18.5 13C18.5 12.43 18.3 11.9 17.97 11.5L19.94 10.35C20.95 9.76 21.3 8.47 20.71 7.46L19.33 5.06C18.74 4.05 17.45 3.7 16.44 4.28L8.31 9C7.36 9.53 7.03 10.75 7.58 11.71L9.08 14.31C9.63 15.26 10.86 15.59 11.81 15.04L13.69 13.96C13.94 14.55 14.41 15.03 15 15.29V18C15 19.1 15.9 20 17 20H22V18H17Z',
   sprinkler: 'M10 10H14V22H10V10M7 9H9V7H7V9M4 8H6V6H4V8M4 11H6V9H4V11M1 13H3V11H1V13M1 7H3V5H1V7M1 10H3V8H1V10M18 11H20V9H18V11M21 10H23V8H21V10M21 5V7H23V5H21M21 13H23V11H21V13M15 9H17V7H15V9M18 8H20V6H18V8M10 7H10.33L11 9H13L13.67 7H14V6H10V7Z',
 };
 const devices = () => (floor().devices = floor().devices || []);
@@ -449,6 +452,15 @@ function render() {
       }
       continue;
     }
+    if (dv.type === 'camera') {
+      const fov = dv.fov || 70, range = dv.range || 130;
+      const mid = ((dv.direction || 0) * Math.PI) / 180;
+      const a1 = mid - (fov * Math.PI) / 360, a2 = mid + (fov * Math.PI) / 360;
+      svg.appendChild(el('path', {
+        d: `M${dv.at[0]},${dv.at[1]} L${dv.at[0] + range * Math.cos(a1)},${dv.at[1] + range * Math.sin(a1)} A${range},${range} 0 0,1 ${dv.at[0] + range * Math.cos(a2)},${dv.at[1] + range * Math.sin(a2)} Z`,
+        class: 'ed-cone',
+      }));
+    }
     const g = el('g', { transform: `translate(${dv.at[0]}, ${dv.at[1]})` });
     const bg = el('circle', { r: 13, class: 'device-bg' + (dv.id === devSel ? ' dsel' : ''), 'data-dev': dv.id });
     g.appendChild(bg);
@@ -523,14 +535,16 @@ function renderSidebar() {
   const dv = anyById(devSel);
   dprops.hidden = !dv;
   if (dv) {
-    document.getElementById('dType').textContent = { light: '· Licht', cover: '· Store', switch: '· Steckdose', mower: '· Mähroboter', sprinkler: '· Bewässerung', ac: '· Klimaanlage', tree: '· Baum', hedge: '· Hecke', plant: '· Pflanze' }[dv.type] || '';
+    document.getElementById('dType').textContent = { light: '· Licht', cover: '· Store', switch: '· Steckdose', mower: '· Mähroboter', sprinkler: '· Bewässerung', ac: '· Klimaanlage', camera: '· Kamera', tree: '· Baum', hedge: '· Hecke', plant: '· Pflanze' }[dv.type] || '';
     const isDecor = DECOR_TYPES.includes(dv.type);
     document.getElementById('dEntityRow').hidden = isDecor;
-    document.getElementById('dSizeRow').hidden = !isDecor;
-    document.getElementById('dSize').value = dv.size || (dv.type === 'tree' ? 24 : dv.type === 'hedge' ? 14 : 10);
+    document.getElementById('dSizeRow').hidden = !isDecor && dv.type !== 'camera';
+    document.getElementById('dSize').value = dv.type === 'camera'
+      ? (dv.range || 130)
+      : dv.size || (dv.type === 'tree' ? 24 : dv.type === 'hedge' ? 14 : 10);
     document.getElementById('dEntity').value = dv.entity || '';
     document.getElementById('dName').value = dv.name || '';
-    document.getElementById('dDirRow').hidden = dv.type !== 'ac';
+    document.getElementById('dDirRow').hidden = dv.type !== 'ac' && dv.type !== 'camera';
     document.getElementById('dDirection').value = dv.direction || 0;
   }
   const multi = document.getElementById('multi');
@@ -586,7 +600,7 @@ svg.addEventListener('pointerdown', (ev) => {
     svg.setPointerCapture(ev.pointerId);
     return;
   }
-  if (['light', 'switch', 'mower', 'sprinkler', 'ac', 'tree', 'plant'].includes(tool)) {
+  if (['light', 'switch', 'mower', 'sprinkler', 'ac', 'camera', 'tree', 'plant'].includes(tool)) {
     const isDecor = DECOR_TYPES.includes(tool);
     const list = isDecor ? decor() : devices();
     const prefix = isDecor ? 'dec-' : 'dev-';
@@ -925,7 +939,8 @@ function deleteDevice(id) {
 document.getElementById('dSize').addEventListener('input', (ev) => {
   const dv = anyById(devSel); if (!dv) return;
   const v = parseInt(ev.target.value, 10);
-  if (Number.isFinite(v) && v >= 4) dv.size = v; else delete dv.size;
+  const key = dv.type === 'camera' ? 'range' : 'size';
+  if (Number.isFinite(v) && v >= 4) dv[key] = v; else delete dv[key];
   persist(); render();
 });
 document.getElementById('dDelete').onclick = () => devSel && deleteDevice(devSel);
@@ -1054,6 +1069,8 @@ function deviceYaml(d) {
   if (d.from) parts.push(`from: [${d.from.map(Math.round).join(', ')}]`, `to: [${d.to.map(Math.round).join(', ')}]`);
   else parts.push(`at: [${d.at.map(Math.round).join(', ')}]`);
   if (d.direction) parts.push(`direction: ${d.direction}`);
+  if (d.range) parts.push(`range: ${d.range}`);
+  if (d.fov) parts.push(`fov: ${d.fov}`);
   if (d.name) parts.push(`name: ${yq(d.name)}`);
   return `  - {${parts.join(', ')}}`;
 }
