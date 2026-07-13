@@ -66,6 +66,8 @@
   .room-shape.surf-stairs{fill:#e6eaef !important;fill-opacity:.9}
   .ed-cone{fill:rgba(93,184,255,.12);stroke:rgba(93,184,255,.5);stroke-width:1;pointer-events:none}
   .ed-wifi{fill:rgba(53,195,208,.08);stroke:#35c3d0;stroke-width:1.5;stroke-dasharray:5 6;opacity:.6;pointer-events:none}
+  .ed-doorgap{stroke:#fff;stroke-width:6;cursor:move}
+  .ed-doorarc{fill:none;stroke:#9aa7b4;stroke-width:1.2;opacity:.7;pointer-events:none}
   .ed-canopy{fill:#7fae7c;stroke:#5d8f5b;stroke-width:1.5;cursor:move}
   .ed-hedge{stroke:#7fae7c;stroke-linecap:round;cursor:move}
   .dsel2{stroke:var(--sel) !important;stroke-width:3}
@@ -78,7 +80,7 @@
 </head>
 <body>
 <header>
-  <h1>🏠 Grundriss-Editor <small style="font-size:11px;font-weight:400;opacity:.55">v0.12.1</small></h1>
+  <h1>🏠 Grundriss-Editor <small style="font-size:11px;font-weight:400;opacity:.55">v0.16.0</small></h1>
   <div class="tabs" id="tabs"></div>
   <div class="tools">
     <button class="tool on" data-tool="select" title="Auswählen/Verschieben (V)">✥ Auswahl</button>
@@ -92,6 +94,7 @@
     <button class="tool" data-tool="ac" title="Klimaanlage platzieren">❄️ Klima</button>
     <button class="tool" data-tool="camera" title="Kamera platzieren (Blickkegel + Klick-Video)">📹 Kamera</button>
     <button class="tool" data-tool="ap" title="WLAN-Access-Point platzieren (Kabel-Nr. im Panel)">📶 AP</button>
+    <button class="tool" data-tool="door" title="Türe an Wand ziehen — Licht/WLAN strahlen hindurch">🚪 Türe</button>
     <button class="tool" data-tool="tree" title="Baum platzieren">🌳 Baum</button>
     <button class="tool" data-tool="hedge" title="Hecke ziehen (auch schräg)">🌿 Hecke</button>
     <button class="tool" data-tool="plant" title="Pflanze platzieren">🪴 Pflanze</button>
@@ -156,6 +159,7 @@
         <input type="number" id="dDirection" step="15" min="0" max="359"></div>
       <div class="field" id="dCableRow" hidden><label>Kabel-Nr. (z. B. B12)</label>
         <input type="text" id="dCable" placeholder="B12"></div>
+      <label class="chk" id="dSwingRow" hidden><input type="checkbox" id="dSwing"> Türanschlag spiegeln</label>
       <div class="hint">Verschieben: ziehen · Löschen: ⌫</div>
       <button class="act" id="dDelete" style="color:#c22">Gerät löschen</button>
     </div>
@@ -229,7 +233,9 @@ const devices = () => (floor().devices = floor().devices || []);
 const devById = (id) => devices().find((d) => d.id === id);
 const decor = () => (floor().decor = floor().decor || []);
 const decorById = (id) => decor().find((d) => d.id === id);
-const anyById = (id) => devById(id) || decorById(id); // Geräte + Deko teilen Auswahl/Drag
+const doors = () => (floor().doors = floor().doors || []);
+const doorById = (id) => doors().find((d) => d.id === id);
+const anyById = (id) => devById(id) || decorById(id) || doorById(id); // Geräte + Deko + Türen teilen Auswahl/Drag
 const DECOR_TYPES = ['tree', 'hedge', 'plant'];
 // Alt-Format migrieren: Store als Punkt (at) → Segment (from/to, 60 px horizontal)
 function normalizeProject() {
@@ -420,6 +426,20 @@ function render() {
     }
   }
 
+  for (const dr of doors()) {
+    const [x1, y1] = dr.from, [x2, y2] = dr.to;
+    const sel = dr.id === devSel;
+    const L = Math.hypot(x2 - x1, y2 - y1) || 1;
+    const sw = dr.swing === -1 ? -1 : 1;
+    const nx = (-(y2 - y1) / L) * sw, ny = ((x2 - x1) / L) * sw;
+    svg.appendChild(el('line', { x1, y1, x2, y2, class: 'ed-doorgap' + (sel ? ' dsel2' : ''), 'data-dev': dr.id }));
+    svg.appendChild(el('path', { d: `M${x1 + nx * L},${y1 + ny * L} A${L},${L} 0 0,${sw === 1 ? 1 : 0} ${x2},${y2}`, class: 'ed-doorarc' }));
+    svg.appendChild(el('line', { x1, y1, x2: x1 + nx * L, y2: y1 + ny * L, class: 'ed-doorarc' }));
+    if (sel) {
+      svg.appendChild(el('circle', { cx: x1, cy: y1, r: 6, class: 'vhandle', 'data-h': 'de0' }));
+      svg.appendChild(el('circle', { cx: x2, cy: y2, r: 6, class: 'vhandle', 'data-h': 'de1' }));
+    }
+  }
   for (const dc of decor()) {
     const sel = dc.id === devSel;
     if (dc.type === 'hedge') {
@@ -543,11 +563,13 @@ function renderSidebar() {
   const dv = anyById(devSel);
   dprops.hidden = !dv;
   if (dv) {
-    document.getElementById('dType').textContent = { light: '· Licht', cover: '· Store', switch: '· Steckdose', mower: '· Mähroboter', sprinkler: '· Bewässerung', ac: '· Klimaanlage', camera: '· Kamera', ap: '· WLAN-AP', tree: '· Baum', hedge: '· Hecke', plant: '· Pflanze' }[dv.type] || '';
-    const isDecor = DECOR_TYPES.includes(dv.type);
+    document.getElementById('dType').textContent = { light: '· Licht', cover: '· Store', switch: '· Steckdose', mower: '· Mähroboter', sprinkler: '· Bewässerung', ac: '· Klimaanlage', camera: '· Kamera', ap: '· WLAN-AP', door: '· Türe', tree: '· Baum', hedge: '· Hecke', plant: '· Pflanze' }[dv.type] || '';
+    const isDecor = DECOR_TYPES.includes(dv.type) || dv.type === 'door';
     const hasRange = dv.type === 'camera' || dv.type === 'ap';
+    document.getElementById('dSwingRow').hidden = dv.type !== 'door';
+    document.getElementById('dSwing').checked = dv.swing === -1;
     document.getElementById('dEntityRow').hidden = isDecor;
-    document.getElementById('dSizeRow').hidden = !isDecor && !hasRange;
+    document.getElementById('dSizeRow').hidden = (!DECOR_TYPES.includes(dv.type) && !hasRange) || dv.type === 'door';
     document.getElementById('dSize').value = hasRange
       ? (dv.range || (dv.type === 'ap' ? 110 : 130))
       : dv.size || (dv.type === 'tree' ? 24 : dv.type === 'hedge' ? 14 : 10);
@@ -606,7 +628,7 @@ svg.addEventListener('pointerdown', (ev) => {
     render();
     return;
   }
-  if (tool === 'cover' || tool === 'hedge') {
+  if (tool === 'cover' || tool === 'hedge' || tool === 'door') {
     draft = { devLine: true, kind: tool, x0: x, y0: y, x1: x, y1: y };
     svg.setPointerCapture(ev.pointerId);
     return;
@@ -822,9 +844,8 @@ svg.addEventListener('pointerup', () => {
       const ang = Math.abs(Math.atan2(dy, dx)) * 180 / Math.PI;
       if (ang < 12 || ang > 168) y1 = y0;
       else if (Math.abs(ang - 90) < 12) x1 = x0;
-      const isDecor = kind === 'hedge';
-      const list = isDecor ? decor() : devices();
-      const prefix = isDecor ? 'dec-' : 'dev-';
+      const list = kind === 'hedge' ? decor() : kind === 'door' ? doors() : devices();
+      const prefix = kind === 'hedge' ? 'dec-' : kind === 'door' ? 'door-' : 'dev-';
       let n = list.length + 1;
       let id = prefix + n;
       while (anyById(id)) id = prefix + ++n;
@@ -943,10 +964,16 @@ document.getElementById('pSplit').onclick = splitRoom;
 function deleteDevice(id) {
   floor().devices = devices().filter((d) => d.id !== id);
   floor().decor = decor().filter((d) => d.id !== id);
+  floor().doors = doors().filter((d) => d.id !== id);
   if (devSel === id) devSel = null;
   persist();
   render();
 }
+document.getElementById('dSwing').addEventListener('change', (ev) => {
+  const dv = anyById(devSel); if (!dv) return;
+  if (ev.target.checked) dv.swing = -1; else delete dv.swing;
+  persist(); render();
+});
 document.getElementById('dSize').addEventListener('input', (ev) => {
   const dv = anyById(devSel); if (!dv) return;
   const v = parseInt(ev.target.value, 10);
@@ -1103,6 +1130,11 @@ document.getElementById('exportBtn').onclick = () => {
     'rooms:',
     ...f.rooms.map(roomYaml),
     ...(f.devices && f.devices.length ? ['devices:', ...f.devices.map(deviceYaml)] : []),
+    ...(f.doors && f.doors.length ? ['doors:', ...f.doors.map((dr) => {
+      const parts = [`from: [${dr.from.map(Math.round).join(', ')}]`, `to: [${dr.to.map(Math.round).join(', ')}]`];
+      if (dr.swing === -1) parts.push('swing: -1');
+      return `  - {${parts.join(', ')}}`;
+    })] : []),
     ...(f.decor && f.decor.length ? ['decor:', ...f.decor.map((dc) => {
       const parts = [`type: ${dc.type}`];
       if (dc.from) parts.push(`from: [${dc.from.map(Math.round).join(', ')}]`, `to: [${dc.to.map(Math.round).join(', ')}]`);

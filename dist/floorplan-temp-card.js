@@ -5,7 +5,7 @@
  * No dependencies, no build step. MIT.
  */
 
-const VERSION = '0.15.1';
+const VERSION = '0.16.0';
 
 // Sichtbarkeits-Ebenen: global über alle Karten synchron (localStorage +
 // Custom-Event), umgeschaltet über die Legende unter dem Kartenkopf.
@@ -20,6 +20,21 @@ const LAYERS = [
   ['other', 'Geräte'],
 ];
 const LAYER_STORE_KEY = 'floorplan-temp-card-layers';
+const LAYER_DOTS = {
+  temp: '#e39a4d', light: '#f0b429', cover: '#7d8b9d', ac: '#5db8ff',
+  camera: '#5d8fb8', wifi: '#35c3d0', decor: '#7fae7c', other: '#9aa7b4',
+};
+
+function layerState() {
+  try { return JSON.parse(localStorage.getItem(LAYER_STORE_KEY)) || {}; } catch (e) { return {}; }
+}
+
+function setLayerState(key, visible) {
+  const st = layerState();
+  st[key] = visible;
+  try { localStorage.setItem(LAYER_STORE_KEY, JSON.stringify(st)); } catch (e) { /* egal */ }
+  window.dispatchEvent(new CustomEvent('fp-layers-changed')); // informiert alle Karten dieser Seite
+}
 const DEVICE_LAYER = {
   light: 'light', cover: 'cover', ac: 'ac', camera: 'camera', ap: 'wifi',
   switch: 'other', mower: 'other', sprinkler: 'other',
@@ -264,6 +279,14 @@ class FloorplanTempCard extends HTMLElement {
         }
       }
     }
+    if (config.doors !== undefined) {
+      if (!Array.isArray(config.doors)) throw new Error('floorplan-temp-card: "doors" must be a list');
+      for (const dr of config.doors) {
+        if (!Array.isArray(dr.from) || !Array.isArray(dr.to)) {
+          throw new Error('floorplan-temp-card: every door needs from/to:[x,y]');
+        }
+      }
+    }
     if (config.decor !== undefined) {
       if (!Array.isArray(config.decor)) throw new Error('floorplan-temp-card: "decor" must be a list');
       for (const dc of config.decor) {
@@ -297,6 +320,7 @@ class FloorplanTempCard extends HTMLElement {
       rooms: config.rooms,
       devices: config.devices || [],
       decor: config.decor || [],
+      doors: config.doors || [],
       // zusätzliche Entities, die "🌙 Schlafen" mit ausschaltet (z. B. Hue-Lampen
       // ohne Platzierung auf dem Plan)
       sleep_extra: Array.isArray(config.sleep_extra) ? config.sleep_extra : [],
@@ -456,6 +480,14 @@ class FloorplanTempCard extends HTMLElement {
       .device.unavail { opacity: 0.4; }
       .device.unavail .device-bg { stroke-dasharray: 3 3; }
       .light-glow { pointer-events: none; transition: opacity 0.6s ease; }
+      /* doors: opening in the wall + swing arc */
+      .door-gap { stroke: var(--card-background-color, #fff); stroke-width: 4.5; pointer-events: none; }
+      .dark .door-gap { stroke: #10161f; }
+      .door-arc { fill: none; stroke: var(--secondary-text-color, #9aa7b4); stroke-width: 1;
+                  opacity: 0.55; pointer-events: none; }
+      .door-leaf { stroke: var(--secondary-text-color, #9aa7b4); stroke-width: 1.5;
+                   opacity: 0.7; pointer-events: none; }
+      .dark .door-arc, .dark .door-leaf { stroke: #7487a0; }
       /* decor greenery — light + dark tuned, non-interactive */
       .decor-tree, .decor-plant, .decor-hedge { pointer-events: none; }
       .decor-tree .canopy, .decor-plant .canopy { fill: #7fae7c; stroke: #5d8f5b; stroke-width: 1.5; }
@@ -581,16 +613,14 @@ class FloorplanTempCard extends HTMLElement {
       if (sc.children.length) header.appendChild(sc);
       card.appendChild(header);
     }
-    // Legende: nur Ebenen anbieten, die auf diesem Stockwerk vorkommen
-    if (c.legend !== false) {
+    // Karten-eigene Legende nur auf Wunsch (legend: true) — für Dashboards mit
+    // mehreren Stockwerken gibt es die zentrale custom:floorplan-legend-card.
+    if (c.legend === true) {
       const present = new Set();
       if (c.rooms.some((r) => r.entity && !r.outline && !r.surface)) present.add('temp');
       for (const dvc of c.devices) present.add(DEVICE_LAYER[dvc.type]);
       if (c.decor.length) present.add('decor');
-      const dots = {
-        temp: '#e39a4d', light: '#f0b429', cover: '#7d8b9d', ac: '#5db8ff',
-        camera: '#5d8fb8', wifi: '#35c3d0', decor: '#7fae7c', other: '#9aa7b4',
-      };
+      const dots = LAYER_DOTS;
       const chips = LAYERS.filter(([k]) => present.has(k));
       if (chips.length > 1) {
         const legend = document.createElement('div');
@@ -683,6 +713,23 @@ class FloorplanTempCard extends HTMLElement {
       this._refs.set(room.id, { room, shape, valueText, deltaText, liveIcon, loops, lightIds: [] });
     }
 
+    // doors: Öffnung in der Wand + klassischer Türflügel-Bogen
+    for (const dr of c.doors) {
+      const [x1, y1] = dr.from, [x2, y2] = dr.to;
+      const L = Math.hypot(x2 - x1, y2 - y1) || 1;
+      // Öffnung: Wandstrich unterbrechen
+      svg.appendChild(svgEl('line', { x1, y1, x2, y2, class: 'door-gap' }));
+      // Flügel: Angel bei from, Schwenk zur linken Seite (swing: -1 spiegelt)
+      const sw = dr.swing === -1 ? -1 : 1;
+      const nx = (-(y2 - y1) / L) * sw, ny = ((x2 - x1) / L) * sw;
+      const tipX = x1 + nx * L, tipY = y1 + ny * L;
+      svg.appendChild(svgEl('path', {
+        d: `M${tipX},${tipY} A${L},${L} 0 0,${sw === 1 ? 1 : 0} ${x2},${y2}`,
+        class: 'door-arc',
+      }));
+      svg.appendChild(svgEl('line', { x1, y1, x2: tipX, y2: tipY, class: 'door-leaf' }));
+    }
+
     // decor: trees, hedges, plants — purely visual, under the devices
     for (const dc of c.decor) {
       if (dc.type === 'hedge') {
@@ -724,10 +771,18 @@ class FloorplanTempCard extends HTMLElement {
     stair.appendChild(svgEl('rect', { width: 24, height: 14, class: 'stair-bg' }));
     stair.appendChild(svgEl('path', { d: 'M0,7 H24', class: 'stair-line', fill: 'none' }));
     defs.appendChild(stair);
-    // per-room clip paths so the glow stays inside the room
+    // per-room clip paths so the glow stays inside the room. Türen stanzen
+    // runde Durchlässe in JEDES Raum-Clipping: Licht/WLAN quellen wellenförmig
+    // durch die Öffnung — bei Räumen ohne Quelle in Türnähe bleibt das folgenlos.
     for (const [id, ref] of this._refs) {
       const cp = svgEl('clipPath', { id: `fp-clip-${id}` });
       cp.appendChild(svgEl('path', { d: loopsToPath(ref.loops), 'clip-rule': 'evenodd' }));
+      for (const dr of c.doors) {
+        const mx = (dr.from[0] + dr.to[0]) / 2, my = (dr.from[1] + dr.to[1]) / 2;
+        const len = Math.hypot(dr.to[0] - dr.from[0], dr.to[1] - dr.from[1]);
+        const r = Math.max(24, Math.min(85, len * 1.1));
+        cp.appendChild(svgEl('circle', { cx: mx, cy: my, r }));
+      }
       defs.appendChild(cp);
     }
     svg.appendChild(defs);
@@ -1091,16 +1146,9 @@ class FloorplanTempCard extends HTMLElement {
     window.removeEventListener('storage', this._onLayersChanged);
   }
 
-  _layerState() {
-    try { return JSON.parse(localStorage.getItem(LAYER_STORE_KEY)) || {}; } catch (e) { return {}; }
-  }
+  _layerState() { return layerState(); }
 
-  _setLayer(key, visible) {
-    const st = this._layerState();
-    st[key] = visible;
-    try { localStorage.setItem(LAYER_STORE_KEY, JSON.stringify(st)); } catch (e) { /* egal */ }
-    window.dispatchEvent(new CustomEvent('fp-layers-changed')); // informiert auch die anderen Stockwerk-Karten
-  }
+  _setLayer(key, visible) { setLayerState(key, visible); }
 
   _applyLayers() {
     const card = this.shadowRoot && this.shadowRoot.querySelector('ha-card');
@@ -1191,11 +1239,122 @@ class FloorplanTempCard extends HTMLElement {
 
 customElements.define('floorplan-temp-card', FloorplanTempCard);
 
+// Zentrale Legende: EINE Karte steuert die Ebenen aller Grundriss-Karten
+// (gleicher localStorage-Schlüssel + fp-layers-changed-Event).
+class FloorplanLegendCard extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: 'open' });
+  }
+
+  setConfig(config) {
+    this._config = {
+      layers: Array.isArray(config.layers) ? config.layers : null,
+      dark: config.dark === undefined ? 'auto' : config.dark,
+      title: config.title,
+    };
+    this._render();
+  }
+
+  set hass(hass) {
+    if (!this._config) return;
+    const dark = this._config.dark === 'auto'
+      ? !!(hass.themes && hass.themes.darkMode)
+      : !!this._config.dark;
+    if (dark !== this._isDark) {
+      this._isDark = dark;
+      const card = this.shadowRoot.querySelector('ha-card');
+      if (card) card.classList.toggle('dark', dark);
+    }
+  }
+
+  getCardSize() { return 1; }
+
+  connectedCallback() {
+    this._onLayersChanged = () => this._sync();
+    window.addEventListener('fp-layers-changed', this._onLayersChanged);
+    window.addEventListener('storage', this._onLayersChanged);
+    this._sync();
+  }
+
+  disconnectedCallback() {
+    window.removeEventListener('fp-layers-changed', this._onLayersChanged);
+    window.removeEventListener('storage', this._onLayersChanged);
+  }
+
+  _sync() {
+    const st = layerState();
+    for (const chip of this.shadowRoot.querySelectorAll('.lg-chip')) {
+      chip.classList.toggle('off', st[chip.dataset.key] === false);
+    }
+  }
+
+  _render() {
+    this.shadowRoot.innerHTML = '';
+    const style = document.createElement('style');
+    style.textContent = `
+      ha-card { padding: 10px 16px; }
+      ha-card.dark { background: #111826; }
+      .row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+      .lg-title { font-weight: 700; font-size: 13px; margin-right: 6px;
+                  color: var(--primary-text-color); }
+      .dark .lg-title { color: #e6ecf3; }
+      .lg-chip {
+        display: inline-flex; align-items: center; gap: 6px;
+        border: 1px solid var(--divider-color, #d5dbe2); border-radius: 999px;
+        padding: 4px 12px; font: inherit; font-size: 12px; line-height: 1.4;
+        color: var(--secondary-text-color, #6b7480); cursor: pointer; background: transparent;
+      }
+      .lg-chip .dot { width: 8px; height: 8px; border-radius: 50%; }
+      .lg-chip.off { opacity: 0.45; }
+      .lg-chip.off .lg-label { text-decoration: line-through; }
+      .dark .lg-chip { border-color: #3c4a61; color: #aab6c5; }
+    `;
+    this.shadowRoot.appendChild(style);
+    const card = document.createElement('ha-card');
+    if (this._isDark || this._config.dark === true) card.classList.add('dark');
+    const row = document.createElement('div');
+    row.className = 'row';
+    if (this._config.title) {
+      const t = document.createElement('span');
+      t.className = 'lg-title';
+      t.textContent = this._config.title;
+      row.appendChild(t);
+    }
+    const keys = this._config.layers;
+    for (const [key, label] of LAYERS.filter(([k]) => !keys || keys.includes(k))) {
+      const chip = document.createElement('button');
+      chip.className = 'lg-chip';
+      chip.dataset.key = key;
+      chip.title = `Ebene „${label}" ein-/ausblenden (alle Stockwerke)`;
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      dot.style.background = LAYER_DOTS[key];
+      const lb = document.createElement('span');
+      lb.className = 'lg-label';
+      lb.textContent = label;
+      chip.append(dot, lb);
+      chip.addEventListener('click', () => setLayerState(key, layerState()[key] === false));
+      row.appendChild(chip);
+    }
+    card.appendChild(row);
+    this.shadowRoot.appendChild(card);
+    this._sync();
+  }
+}
+
+customElements.define('floorplan-legend-card', FloorplanLegendCard);
+
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'floorplan-temp-card',
   name: 'Floorplan Temp Card',
   description: 'Floor plan with rooms colored by temperature + trend indicator',
+});
+window.customCards.push({
+  type: 'floorplan-legend-card',
+  name: 'Floorplan Legend Card',
+  description: 'Central layer legend controlling all floorplan-temp-cards on the page',
 });
 
 console.info(
