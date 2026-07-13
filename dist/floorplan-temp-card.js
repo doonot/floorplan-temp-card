@@ -5,7 +5,7 @@
  * No dependencies, no build step. MIT.
  */
 
-const VERSION = '0.15.0';
+const VERSION = '0.15.1';
 
 // Sichtbarkeits-Ebenen: global über alle Karten synchron (localStorage +
 // Custom-Event), umgeschaltet über die Legende unter dem Kartenkopf.
@@ -486,6 +486,10 @@ class FloorplanTempCard extends HTMLElement {
       /* WLAN-AP: cyan coverage + expanding ripple rings */
       .wifi-cover { pointer-events: none; }
       .wifi-cover .wifi-fill { fill: url(#fp-wifi); }
+      .wifi-cover .wifi-edge {
+        fill: none; stroke: #35c3d0; stroke-width: 1.5;
+        stroke-dasharray: 5 6; opacity: 0.4;
+      }
       .wifi-cover .wifi-ring {
         fill: none; stroke: #35c3d0; stroke-width: 2; opacity: 0;
         transform-box: fill-box; transform-origin: center;
@@ -768,6 +772,8 @@ class FloorplanTempCard extends HTMLElement {
         const range = dev.range || 110;
         wifiCover = svgEl('g', { class: 'wifi-cover', 'data-layer': 'wifi' });
         wifiCover.appendChild(svgEl('circle', { cx: dev.at[0], cy: dev.at[1], r: range, class: 'wifi-fill' }));
+        // sichtbare Radius-Grenze (konfigurierter range)
+        wifiCover.appendChild(svgEl('circle', { cx: dev.at[0], cy: dev.at[1], r: range, class: 'wifi-edge' }));
         for (let i = 0; i < 3; i++) {
           const rp = svgEl('circle', { cx: dev.at[0], cy: dev.at[1], r: range, class: 'wifi-ring' });
           rp.style.animationDelay = `${i * 1.2}s`;

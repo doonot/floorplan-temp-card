@@ -65,6 +65,7 @@
   .room-shape.surf-paving{fill:#d9dde2 !important;fill-opacity:.9}
   .room-shape.surf-stairs{fill:#e6eaef !important;fill-opacity:.9}
   .ed-cone{fill:rgba(93,184,255,.12);stroke:rgba(93,184,255,.5);stroke-width:1;pointer-events:none}
+  .ed-wifi{fill:rgba(53,195,208,.08);stroke:#35c3d0;stroke-width:1.5;stroke-dasharray:5 6;opacity:.6;pointer-events:none}
   .ed-canopy{fill:#7fae7c;stroke:#5d8f5b;stroke-width:1.5;cursor:move}
   .ed-hedge{stroke:#7fae7c;stroke-linecap:round;cursor:move}
   .dsel2{stroke:var(--sel) !important;stroke-width:3}
@@ -455,6 +456,9 @@ function render() {
         svg.appendChild(el('circle', { cx: x2, cy: y2, r: 6, class: 'vhandle', 'data-h': 'de1' }));
       }
       continue;
+    }
+    if (dv.type === 'ap') {
+      svg.appendChild(el('circle', { cx: dv.at[0], cy: dv.at[1], r: dv.range || 110, class: 'ed-wifi' }));
     }
     if (dv.type === 'camera') {
       const fov = dv.fov || 70, range = dv.range || 130;
