@@ -5,7 +5,7 @@
  * No dependencies, no build step. MIT.
  */
 
-const VERSION = '0.10.0';
+const VERSION = '0.11.0';
 
 // Device icons placed on the plan (24×24 mdi paths)
 const DEVICE_ICONS = {
@@ -243,6 +243,16 @@ class FloorplanTempCard extends HTMLElement {
         }
       }
     }
+    if (config.decor !== undefined) {
+      if (!Array.isArray(config.decor)) throw new Error('floorplan-temp-card: "decor" must be a list');
+      for (const dc of config.decor) {
+        const point = Array.isArray(dc.at) && dc.at.length === 2;
+        const seg = Array.isArray(dc.from) && Array.isArray(dc.to);
+        if (!['tree', 'hedge', 'plant'].includes(dc.type) || !(dc.type === 'hedge' ? seg : point)) {
+          throw new Error('floorplan-temp-card: decor needs type tree/plant (at:[x,y]) or hedge (from/to)');
+        }
+      }
+    }
     const mode = config.color_mode || 'thresholds';
     if (!['thresholds', 'gradient'].includes(mode)) {
       throw new Error('floorplan-temp-card: color_mode must be "thresholds" or "gradient"');
@@ -265,6 +275,7 @@ class FloorplanTempCard extends HTMLElement {
       title: config.title,
       rooms: config.rooms,
       devices: config.devices || [],
+      decor: config.decor || [],
       // true | false | 'auto' (follows the HA dark mode)
       dark: config.dark === undefined ? 'auto' : config.dark,
     };
@@ -407,6 +418,14 @@ class FloorplanTempCard extends HTMLElement {
       .device.unavail { opacity: 0.4; }
       .device.unavail .device-bg { stroke-dasharray: 3 3; }
       .light-glow { pointer-events: none; transition: opacity 0.6s ease; }
+      /* decor greenery — light + dark tuned, non-interactive */
+      .decor-tree, .decor-plant, .decor-hedge { pointer-events: none; }
+      .decor-tree .canopy, .decor-plant .canopy { fill: #7fae7c; stroke: #5d8f5b; stroke-width: 1.5; }
+      .decor-tree .canopy-hi, .decor-plant .canopy-hi { fill: #9cc498; opacity: 0.7; }
+      .decor-hedge { stroke: #7fae7c; stroke-linecap: round; opacity: 0.9; }
+      .dark .decor-tree .canopy, .dark .decor-plant .canopy { fill: #274733; stroke: #3e7052; }
+      .dark .decor-tree .canopy-hi, .dark .decor-plant .canopy-hi { fill: #35604a; opacity: 0.8; }
+      .dark .decor-hedge { stroke: #2e5340; }
       /* garden: mowing = green, watering = blue, both gently pulsing */
       .device.active .device-bg { fill: #3aa981; stroke: #1f7a5c; animation: fp-livepulse 1.6s ease-in-out infinite; }
       .device.active .device-icon { fill: #0d3327; }
@@ -534,6 +553,25 @@ class FloorplanTempCard extends HTMLElement {
       }
       svg.appendChild(g);
       this._refs.set(room.id, { room, shape, valueText, deltaText, liveIcon, loops, lightIds: [] });
+    }
+
+    // decor: trees, hedges, plants — purely visual, under the devices
+    for (const dc of c.decor) {
+      if (dc.type === 'hedge') {
+        const bw = dc.size || 14;
+        svg.appendChild(svgEl('line', {
+          x1: dc.from[0], y1: dc.from[1], x2: dc.to[0], y2: dc.to[1],
+          class: 'decor-hedge', 'stroke-width': bw,
+        }));
+      } else {
+        const r = dc.size || (dc.type === 'tree' ? 24 : 10);
+        const g = svgEl('g', { class: 'decor-' + dc.type });
+        g.appendChild(svgEl('circle', { cx: dc.at[0], cy: dc.at[1], r, class: 'canopy' }));
+        g.appendChild(svgEl('circle', {
+          cx: dc.at[0] - r * 0.25, cy: dc.at[1] - r * 0.25, r: r * 0.55, class: 'canopy-hi',
+        }));
+        svg.appendChild(g);
+      }
     }
 
     // warm glow under the device icons for lights that are on

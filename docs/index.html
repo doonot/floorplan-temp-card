@@ -61,12 +61,16 @@
   .cover-border.dsel{stroke:var(--sel)}
   .cover-track{stroke:#f2f5f9;stroke-linecap:round;pointer-events:none}
   .cover-hit{stroke:transparent;stroke-linecap:round;cursor:move}
+  .ed-canopy{fill:#7fae7c;stroke:#5d8f5b;stroke-width:1.5;cursor:move}
+  .ed-hedge{stroke:#7fae7c;stroke-linecap:round;cursor:move}
+  .dsel2{stroke:var(--sel) !important;stroke-width:3}
+  line.ed-hedge.dsel2{stroke:#5d8f5b !important;filter:drop-shadow(0 0 3px var(--sel))}
   #bgimg{pointer-events:none}
 </style>
 </head>
 <body>
 <header>
-  <h1>🏠 Grundriss-Editor <small style="font-size:11px;font-weight:400;opacity:.55">v0.10.0</small></h1>
+  <h1>🏠 Grundriss-Editor <small style="font-size:11px;font-weight:400;opacity:.55">v0.11.0</small></h1>
   <div class="tabs" id="tabs"></div>
   <div class="tools">
     <button class="tool on" data-tool="select" title="Auswählen/Verschieben (V)">✥ Auswahl</button>
@@ -78,6 +82,9 @@
     <button class="tool" data-tool="mower" title="Mähroboter platzieren">🤖 Mäher</button>
     <button class="tool" data-tool="sprinkler" title="Bewässerung platzieren">💦 Wasser</button>
     <button class="tool" data-tool="ac" title="Klimaanlage platzieren">❄️ Klima</button>
+    <button class="tool" data-tool="tree" title="Baum platzieren">🌳 Baum</button>
+    <button class="tool" data-tool="hedge" title="Hecke ziehen (auch schräg)">🌿 Hecke</button>
+    <button class="tool" data-tool="plant" title="Pflanze platzieren">🪴 Pflanze</button>
   </div>
   <div class="sp"></div>
   <button class="act" id="bgfileBtn" title="Grundriss-Plan (Foto/Scan) als Zeichenvorlage hinterlegen — bleibt lokal">🖼 Plan-Bild laden…</button>
@@ -111,8 +118,10 @@
     </div>
     <div id="dprops" hidden>
       <h2>Ausgewähltes Gerät <span id="dType" style="font-weight:400"></span></h2>
-      <div class="field"><label>Entity (light.* / cover.* / switch.*)</label>
+      <div class="field" id="dEntityRow"><label>Entity (light.* / cover.* / switch.*)</label>
         <input type="text" id="dEntity" placeholder="light.licht_eg_entree_spots"></div>
+      <div class="field" id="dSizeRow" hidden><label>Größe (Radius bzw. Hecken-Dicke, px)</label>
+        <input type="number" id="dSize" step="2" min="4" max="120"></div>
       <div class="field"><label>Name (Tooltip, optional)</label><input type="text" id="dName"></div>
       <div class="field" id="dDirRow" hidden><label>Luftstrom-Richtung (° · 0=→ 90=↓ 180=← 270=↑)</label>
         <input type="number" id="dDirection" step="15" min="0" max="359"></div>
@@ -130,6 +139,7 @@
       2. Mit ▭ Räume über die Zimmer ziehen (Raster 5 px).<br>
       3. Raum anklicken → Name + Sensor-Entity zuweisen.<br>
       3b. L-/T-förmige Räume: mehrere Rechtecke zeichnen, mit <b>Shift-Klick</b> zusammen auswählen → „Zu einer Fläche vereinen". Trennen jederzeit über „Flächen trennen".<br>
+      3d. 🌳/🌿/🪴: Bäume, Hecken (ziehen, auch schräg) und Pflanzen als Deko — ohne Entity, Größe im Panel. <b>Schräge Raumformen</b>: ⬠ Polygon-Werkzeug. <b>Cmd/Ctrl-A</b>: alles markieren, dann ziehen verschiebt das ganze Stockwerk (z. B. um Platz für den Garten zu schaffen — Canvas vorher über Breite/Höhe vergrößern).<br>
       3c. 💡/🔌: Lichter und Steckdosen aufs Bild setzen (L), Entity zuweisen. ▤ Store (S): <b>am Fenster entlang aufziehen</b> — wird ein Balken, Endpunkte ziehen = Länge ändern. In der Karte: Licht-Tap schaltet, lang drücken = Details; Store-Tap öffnet die Steuerung, Füllung = wie weit unten.<br>
       4. „YAML exportieren" → Config in HA einfügen (<code>custom:floorplan-temp-card</code>).<br>
       Projekt wird automatisch im Browser gespeichert.</div>
@@ -167,12 +177,13 @@ try {
 let tool = 'select';
 let selId = null;   // genau ein Raum ausgewählt (Eigenschaften-Panel)
 let selIds = [];    // volle Auswahl (Shift-Klick = Mehrfachauswahl zum Vereinen)
-function setSel(ids) { selIds = ids; selId = ids.length === 1 ? ids[0] : null; if (ids.length) devSel = null; }
+function setSel(ids) { selIds = ids; selId = ids.length === 1 ? ids[0] : null; if (ids.length) devSel = null; selAll = false; }
 function toggleSel(id, additive) {
   if (!additive) return setSel([id]);
   setSel(selIds.includes(id) ? selIds.filter((x) => x !== id) : [...selIds, id]);
 }
 let devSel = null; // ausgewähltes Gerät (schließt Raum-Auswahl aus)
+let selAll = false; // Cmd/Ctrl-A: beim Ziehen wandern auch Geräte + Deko mit
 const DEVICE_ICONS = {
   light: 'M12,2A7,7 0 0,0 5,9C5,11.38 6.19,13.47 8,14.74V17A1,1 0 0,0 9,18H15A1,1 0 0,0 16,17V14.74C17.81,13.47 19,11.38 19,9A7,7 0 0,0 12,2M9,21A1,1 0 0,0 10,22H14A1,1 0 0,0 15,21V20H9V21Z',
   cover: 'M3,4H21V8H19V20H17V8H7V20H5V8H3V4M8,9H16V11H8V9M8,12H16V14H8V12M8,15H16V17H8V15M8,18H16V20H8V18Z',
@@ -183,6 +194,10 @@ const DEVICE_ICONS = {
 };
 const devices = () => (floor().devices = floor().devices || []);
 const devById = (id) => devices().find((d) => d.id === id);
+const decor = () => (floor().decor = floor().decor || []);
+const decorById = (id) => decor().find((d) => d.id === id);
+const anyById = (id) => devById(id) || decorById(id); // Geräte + Deko teilen Auswahl/Drag
+const DECOR_TYPES = ['tree', 'hedge', 'plant'];
 // Alt-Format migrieren: Store als Punkt (at) → Segment (from/to, 60 px horizontal)
 function normalizeProject() {
   for (const f of project.floors) {
@@ -354,6 +369,20 @@ function render() {
     }
   }
 
+  for (const dc of decor()) {
+    const sel = dc.id === devSel;
+    if (dc.type === 'hedge') {
+      const [x1, y1] = dc.from, [x2, y2] = dc.to;
+      svg.appendChild(el('line', { x1, y1, x2, y2, class: 'ed-hedge' + (sel ? ' dsel2' : ''), 'stroke-width': dc.size || 14, 'data-dev': dc.id }));
+      if (sel) {
+        svg.appendChild(el('circle', { cx: x1, cy: y1, r: 6, class: 'vhandle', 'data-h': 'de0' }));
+        svg.appendChild(el('circle', { cx: x2, cy: y2, r: 6, class: 'vhandle', 'data-h': 'de1' }));
+      }
+    } else {
+      const r = dc.size || (dc.type === 'tree' ? 24 : 10);
+      svg.appendChild(el('circle', { cx: dc.at[0], cy: dc.at[1], r, class: 'ed-canopy' + (sel ? ' dsel2' : ''), 'data-dev': dc.id }));
+    }
+  }
   for (const dv of devices()) {
     if (dv.type === 'cover' && dv.from) {
       const [x1, y1] = dv.from, [x2, y2] = dv.to;
@@ -415,10 +444,14 @@ function renderSidebar() {
     document.getElementById('pSplit').hidden = !r.rects;
   }
   const dprops = document.getElementById('dprops');
-  const dv = devById(devSel);
+  const dv = anyById(devSel);
   dprops.hidden = !dv;
   if (dv) {
-    document.getElementById('dType').textContent = { light: '· Licht', cover: '· Store', switch: '· Steckdose', mower: '· Mähroboter', sprinkler: '· Bewässerung', ac: '· Klimaanlage' }[dv.type] || '';
+    document.getElementById('dType').textContent = { light: '· Licht', cover: '· Store', switch: '· Steckdose', mower: '· Mähroboter', sprinkler: '· Bewässerung', ac: '· Klimaanlage', tree: '· Baum', hedge: '· Hecke', plant: '· Pflanze' }[dv.type] || '';
+    const isDecor = DECOR_TYPES.includes(dv.type);
+    document.getElementById('dEntityRow').hidden = isDecor;
+    document.getElementById('dSizeRow').hidden = !isDecor;
+    document.getElementById('dSize').value = dv.size || (dv.type === 'tree' ? 24 : dv.type === 'hedge' ? 14 : 10);
     document.getElementById('dEntity').value = dv.entity || '';
     document.getElementById('dName').value = dv.name || '';
     document.getElementById('dDirRow').hidden = dv.type !== 'ac';
@@ -466,16 +499,19 @@ svg.addEventListener('pointerdown', (ev) => {
     render();
     return;
   }
-  if (tool === 'cover') {
-    draft = { devLine: true, x0: x, y0: y, x1: x, y1: y };
+  if (tool === 'cover' || tool === 'hedge') {
+    draft = { devLine: true, kind: tool, x0: x, y0: y, x1: x, y1: y };
     svg.setPointerCapture(ev.pointerId);
     return;
   }
-  if (tool === 'light' || tool === 'switch' || tool === 'mower' || tool === 'sprinkler' || tool === 'ac') {
-    let n = devices().length + 1;
-    let id = 'dev-' + n;
-    while (devById(id)) id = 'dev-' + ++n;
-    devices().push({ id, type: tool, at: [x, y] });
+  if (['light', 'switch', 'mower', 'sprinkler', 'ac', 'tree', 'plant'].includes(tool)) {
+    const isDecor = DECOR_TYPES.includes(tool);
+    const list = isDecor ? decor() : devices();
+    const prefix = isDecor ? 'dec-' : 'dev-';
+    let n = list.length + 1;
+    let id = prefix + n;
+    while (anyById(id)) id = prefix + ++n;
+    list.push({ id, type: tool, at: [x, y] });
     setSel([]); devSel = id;
     setTool('select');
     persist();
@@ -483,7 +519,7 @@ svg.addEventListener('pointerdown', (ev) => {
     return;
   }
   // select tool — device endpoint handles, then devices, then rooms
-  const dvSel = devById(devSel);
+  const dvSel = anyById(devSel);
   if (h && (h === 'de0' || h === 'de1') && dvSel) {
     drag = { type: h, start: [x, y], orig: JSON.parse(JSON.stringify(dvSel)) };
     svg.setPointerCapture(ev.pointerId);
@@ -492,7 +528,7 @@ svg.addEventListener('pointerdown', (ev) => {
   const devId = ev.target.getAttribute && ev.target.getAttribute('data-dev');
   if (devId) {
     setSel([]); devSel = devId;
-    drag = { type: 'device', start: [x, y], orig: JSON.parse(JSON.stringify(devById(devId))) };
+    drag = { type: 'device', start: [x, y], orig: JSON.parse(JSON.stringify(anyById(devId))) };
     svg.setPointerCapture(ev.pointerId);
     render();
     return;
@@ -506,6 +542,17 @@ svg.addEventListener('pointerdown', (ev) => {
   if (id) {
     if (ev.shiftKey) {
       toggleSel(id, true); // Mehrfachauswahl zum Vereinen — kein Drag
+    } else if (selIds.length > 1 && selIds.includes(id)) {
+      // Mehrfachauswahl gemeinsam verschieben (bei Cmd/Ctrl-A inkl. Geräte + Deko)
+      drag = {
+        type: 'multimove', start: [x, y],
+        orig: {
+          rooms: JSON.parse(JSON.stringify(floor().rooms.filter((r) => selIds.includes(r.id)))),
+          devices: selAll ? JSON.parse(JSON.stringify(devices())) : null,
+          decor: selAll ? JSON.parse(JSON.stringify(decor())) : null,
+        },
+      };
+      svg.setPointerCapture(ev.pointerId);
     } else {
       setSel([id]);
       const rr = roomById(id);
@@ -523,8 +570,28 @@ svg.addEventListener('pointermove', (ev) => {
   if (draft && !draft.points) { draft.x1 = x; draft.y1 = y; render(); return; }
   if (draft && draft.points) { draft.cursor = [x, y]; render(); return; }
   if (!drag) return;
+  if (drag.type === 'multimove') {
+    const dx = snap(x - drag.start[0]), dy = snap(y - drag.start[1]);
+    for (const ro of drag.orig.rooms) {
+      const r2 = roomById(ro.id); if (!r2) continue;
+      if (ro.rect) r2.rect = [ro.rect[0] + dx, ro.rect[1] + dy, ro.rect[2], ro.rect[3]];
+      if (ro.rects) r2.rects = ro.rects.map(([a, b, w2, h2]) => [a + dx, b + dy, w2, h2]);
+      if (ro.polygon) r2.polygon = ro.polygon.map(([a, b]) => [a + dx, b + dy]);
+      if (ro.label) r2.label = [ro.label[0] + dx, ro.label[1] + dy];
+    }
+    for (const [list, orig] of [[devices(), drag.orig.devices], [decor(), drag.orig.decor]]) {
+      if (!orig) continue;
+      list.forEach((it, i) => {
+        const o2 = orig[i]; if (!o2) return;
+        if (o2.at) it.at = [o2.at[0] + dx, o2.at[1] + dy];
+        if (o2.from) { it.from = [o2.from[0] + dx, o2.from[1] + dy]; it.to = [o2.to[0] + dx, o2.to[1] + dy]; }
+      });
+    }
+    render();
+    return;
+  }
   if (drag.type === 'device') {
-    const dv = devById(devSel);
+    const dv = anyById(devSel);
     if (dv) {
       if (dv.from) {
         const o = drag.orig, dx = x - drag.start[0], dy = y - drag.start[1];
@@ -538,7 +605,7 @@ svg.addEventListener('pointermove', (ev) => {
     return;
   }
   if (drag.type === 'de0' || drag.type === 'de1') {
-    const dv = devById(devSel);
+    const dv = anyById(devSel);
     if (dv && dv.from) { dv[drag.type === 'de0' ? 'from' : 'to'] = [x, y]; render(); }
     return;
   }
@@ -579,19 +646,22 @@ svg.addEventListener('pointermove', (ev) => {
 
 svg.addEventListener('pointerup', () => {
   if (draft && draft.devLine) {
-    let { x0, y0, x1, y1 } = draft;
+    let { kind, x0, y0, x1, y1 } = draft;
     draft = null;
     const dx = x1 - x0, dy = y1 - y0;
     const len = Math.hypot(dx, dy);
     if (len >= SNAP * 3) {
-      // an Achse ausrichten, wenn fast horizontal/vertikal (±12°)
+      // an Achse ausrichten, wenn fast horizontal/vertikal (±12°) — schräg bleibt schräg
       const ang = Math.abs(Math.atan2(dy, dx)) * 180 / Math.PI;
       if (ang < 12 || ang > 168) y1 = y0;
       else if (Math.abs(ang - 90) < 12) x1 = x0;
-      let n = devices().length + 1;
-      let id = 'dev-' + n;
-      while (devById(id)) id = 'dev-' + ++n;
-      devices().push({ id, type: 'cover', from: [x0, y0], to: [x1, y1] });
+      const isDecor = kind === 'hedge';
+      const list = isDecor ? decor() : devices();
+      const prefix = isDecor ? 'dec-' : 'dev-';
+      let n = list.length + 1;
+      let id = prefix + n;
+      while (anyById(id)) id = prefix + ++n;
+      list.push({ id, type: kind, from: [x0, y0], to: [x1, y1] });
       setSel([]); devSel = id;
       setTool('select');
       persist();
@@ -612,6 +682,14 @@ svg.addEventListener('pointerup', () => {
 svg.addEventListener('dblclick', () => finishPoly());
 window.addEventListener('keydown', (ev) => {
   if (ev.target.tagName === 'INPUT' || ev.target.tagName === 'TEXTAREA') return;
+  if ((ev.metaKey || ev.ctrlKey) && ev.key === 'a') {
+    // alles markieren — Ziehen verschiebt dann Räume + Geräte + Deko gemeinsam
+    ev.preventDefault();
+    setSel(floor().rooms.map((r) => r.id));
+    selAll = true;
+    render();
+    return;
+  }
   if (ev.key === 'Enter') finishPoly();
   if (ev.key === 'Escape') { draft = null; setSel([]); render(); }
   if ((ev.key === 'Backspace' || ev.key === 'Delete') && devSel) { deleteDevice(devSel); return; }
@@ -697,20 +775,27 @@ document.getElementById('pSplit').onclick = splitRoom;
 // ---------- device panel ----------
 function deleteDevice(id) {
   floor().devices = devices().filter((d) => d.id !== id);
+  floor().decor = decor().filter((d) => d.id !== id);
   if (devSel === id) devSel = null;
   persist();
   render();
 }
+document.getElementById('dSize').addEventListener('input', (ev) => {
+  const dv = anyById(devSel); if (!dv) return;
+  const v = parseInt(ev.target.value, 10);
+  if (Number.isFinite(v) && v >= 4) dv.size = v; else delete dv.size;
+  persist(); render();
+});
 document.getElementById('dDelete').onclick = () => devSel && deleteDevice(devSel);
 for (const [id, key] of [['dEntity', 'entity'], ['dName', 'name']]) {
   document.getElementById(id).addEventListener('input', (ev) => {
-    const dv = devById(devSel); if (!dv) return;
+    const dv = anyById(devSel); if (!dv) return;
     if (ev.target.value) dv[key] = ev.target.value; else delete dv[key];
     persist();
   });
 }
 document.getElementById('dDirection').addEventListener('input', (ev) => {
-  const dv = devById(devSel); if (!dv) return;
+  const dv = anyById(devSel); if (!dv) return;
   const v = parseInt(ev.target.value, 10);
   if (Number.isFinite(v) && v) dv.direction = v; else delete dv.direction;
   persist();
@@ -829,6 +914,13 @@ document.getElementById('exportBtn').onclick = () => {
     'rooms:',
     ...f.rooms.map(roomYaml),
     ...(f.devices && f.devices.length ? ['devices:', ...f.devices.map(deviceYaml)] : []),
+    ...(f.decor && f.decor.length ? ['decor:', ...f.decor.map((dc) => {
+      const parts = [`type: ${dc.type}`];
+      if (dc.from) parts.push(`from: [${dc.from.map(Math.round).join(', ')}]`, `to: [${dc.to.map(Math.round).join(', ')}]`);
+      else parts.push(`at: [${dc.at.map(Math.round).join(', ')}]`);
+      if (dc.size) parts.push(`size: ${dc.size}`);
+      return `  - {${parts.join(', ')}}`;
+    })] : []),
   ].join('\n');
   document.getElementById('yamlOut').value = yaml;
   document.getElementById('dlg').showModal();
