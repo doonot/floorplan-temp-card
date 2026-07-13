@@ -5,13 +5,16 @@
  * No dependencies, no build step. MIT.
  */
 
-const VERSION = '0.9.0';
+const VERSION = '0.10.0';
 
 // Device icons placed on the plan (24×24 mdi paths)
 const DEVICE_ICONS = {
   light: 'M12,2A7,7 0 0,0 5,9C5,11.38 6.19,13.47 8,14.74V17A1,1 0 0,0 9,18H15A1,1 0 0,0 16,17V14.74C17.81,13.47 19,11.38 19,9A7,7 0 0,0 12,2M9,21A1,1 0 0,0 10,22H14A1,1 0 0,0 15,21V20H9V21Z',
   cover: 'M3,4H21V8H19V20H17V8H7V20H5V8H3V4M8,9H16V11H8V9M8,12H16V14H8V12M8,15H16V17H8V15M8,18H16V20H8V18Z',
   switch: 'M16,7V3H14V7H10V3H8V7C8,7 7,8 7,9V14.5L10.5,18V21H13.5V18L17,14.5V9C17,8 16,7 16,7Z',
+  mower: 'M1 14V5H13C18.5 5 23 9.5 23 15V17H20.83C20.42 18.17 19.31 19 18 19C16.69 19 15.58 18.17 15.17 17H10C9.09 18.21 7.64 19 6 19C3.24 19 1 16.76 1 14M6 11C4.34 11 3 12.34 3 14C3 15.66 4.34 17 6 17C7.66 17 9 15.66 9 14C9 12.34 7.66 11 6 11M15 10V12H20.25C19.92 11.27 19.5 10.6 19 10H15Z',
+  sprinkler: 'M10 10H14V22H10V10M7 9H9V7H7V9M4 8H6V6H4V8M4 11H6V9H4V11M1 13H3V11H1V13M1 7H3V5H1V7M1 10H3V8H1V10M18 11H20V9H18V11M21 10H23V8H21V10M21 5V7H23V5H21M21 13H23V11H21V13M15 9H17V7H15V9M18 8H20V6H18V8M10 7H10.33L11 9H13L13.67 7H14V6H10V7Z',
+  ac: 'M6.59,0.66C8.93,-1.15 11.47,1.06 12.04,4.5C12.47,4.5 12.89,4.62 13.27,4.84C13.79,4.24 14.25,3.42 14.07,2.5C13.65,0.35 16.06,-1.39 18.35,1.58C20.16,3.92 17.95,6.46 14.5,7.03C14.5,7.46 14.39,7.89 14.16,8.27C14.76,8.78 15.58,9.24 16.5,9.06C18.63,8.64 20.38,11.04 17.41,13.34C15.07,15.15 12.53,12.94 11.96,9.5C11.53,9.5 11.11,9.37 10.74,9.15C10.22,9.75 9.75,10.58 9.93,11.5C10.35,13.64 7.94,15.39 5.65,12.42C3.83,10.07 6.05,7.53 9.5,6.97C9.5,6.54 9.63,6.12 9.85,5.74C9.25,5.23 8.43,4.76 7.5,4.94C5.37,5.36 3.62,2.96 6.59,0.66M5,16H7A2,2 0 0,1 9,18V24H7V22H5V24H3V18A2,2 0 0,1 5,16M5,18V20H7V18H5M12.93,16H15L12.07,24H10L12.93,16M18,16H21V18H18V22H21V24H18A2,2 0 0,1 16,22V18A2,2 0 0,1 18,16Z',
 };
 
 // Live badge next to the room name when the entity is a real sensor (domain
@@ -230,7 +233,7 @@ class FloorplanTempCard extends HTMLElement {
     if (config.devices !== undefined) {
       if (!Array.isArray(config.devices)) throw new Error('floorplan-temp-card: "devices" must be a list');
       for (const dv of config.devices) {
-        const okType = ['light', 'cover', 'switch'].includes(dv.type);
+        const okType = ['light', 'cover', 'switch', 'mower', 'sprinkler', 'ac'].includes(dv.type);
         const hasAt = Array.isArray(dv.at) && dv.at.length === 2;
         const hasSegment = Array.isArray(dv.from) && dv.from.length === 2
           && Array.isArray(dv.to) && dv.to.length === 2;
@@ -404,6 +407,24 @@ class FloorplanTempCard extends HTMLElement {
       .device.unavail { opacity: 0.4; }
       .device.unavail .device-bg { stroke-dasharray: 3 3; }
       .light-glow { pointer-events: none; transition: opacity 0.6s ease; }
+      /* garden: mowing = green, watering = blue, both gently pulsing */
+      .device.active .device-bg { fill: #3aa981; stroke: #1f7a5c; animation: fp-livepulse 1.6s ease-in-out infinite; }
+      .device.active .device-icon { fill: #0d3327; }
+      .device.watering .device-bg { fill: #3a9bdc; stroke: #1f6ea8; animation: fp-livepulse 1.6s ease-in-out infinite; }
+      .device.watering .device-icon { fill: #0b2f4a; }
+      /* AC: cool-blue airflow streaming into the room while running */
+      .device.cooling .device-bg { fill: #7fd0f7; stroke: #2b8ac2; }
+      .device.cooling .device-icon { fill: #0b3a55; }
+      .ac-flow path {
+        fill: none; stroke: #5db8ff; stroke-width: 3.2; stroke-linecap: round;
+        stroke-dasharray: 10 13; opacity: 0.75;
+        animation: fp-acflow 1.1s linear infinite;
+      }
+      .ac-flow { pointer-events: none; transition: opacity 0.5s ease; }
+      @keyframes fp-acflow { to { stroke-dashoffset: -23; } }
+      @media (prefers-reduced-motion: reduce) {
+        .ac-flow path, .device.active .device-bg, .device.watering .device-bg { animation: none; }
+      }
       path.wall, path.wall.neutral { transition: fill 0.5s ease; }
       /* covers drawn as real blinds: a bar along the window, filled by closed fraction */
       .cover-border { stroke: #7d8b9d; stroke-linecap: round; }
@@ -563,7 +584,21 @@ class FloorplanTempCard extends HTMLElement {
       tip.textContent = dev.name || dev.entity;
       g.appendChild(tip);
       g.appendChild(svgEl('circle', { r: devR + 16, class: 'device-hit' }));
-      let ring = null, glow = null;
+      let ring = null, glow = null, flow = null;
+      if (dev.type === 'ac') {
+        // airflow streams pointing in `direction` (degrees, 0 = right/east)
+        flow = svgEl('g', {
+          class: 'ac-flow',
+          transform: `translate(${dev.at[0]}, ${dev.at[1]}) rotate(${dev.direction || 0})`,
+        });
+        for (const sd of [
+          'M24,-14 q18,-8 36,0 t36,0 t36,0',
+          'M26,0 q18,-8 36,0 t36,0 t36,0 t36,0',
+          'M24,14 q18,-8 36,0 t36,0 t36,0',
+        ]) flow.appendChild(svgEl('path', { d: sd }));
+        flow.style.opacity = '0';
+        glowLayer.appendChild(flow);
+      }
       if (dev.type === 'light') {
         // room lights up: soft radial glow + the containing room brightens
         glow = svgEl('circle', {
@@ -600,7 +635,7 @@ class FloorplanTempCard extends HTMLElement {
         ring.style.display = pct > 0 ? '' : 'none';
         ring.setAttribute('stroke-dasharray', `${(ringC * pct) / 100} ${ringC}`);
       };
-      this._devRefs.push({ dev, g, setRing, glow });
+      this._devRefs.push({ dev, g, setRing, glow, flow });
       let pressTimer = null, longPressed = false, moved = false, dimming = false;
       let startY = 0, startPct = 0, lastSent = 0;
       g.addEventListener('pointerdown', (ev) => {
@@ -638,8 +673,13 @@ class FloorplanTempCard extends HTMLElement {
         if (longPressed) return;
         if (dimming) { this._callDim(dev.entity, this._dimPct); return; }
         if (moved) return;
-        if (dev.type === 'cover') this._openMoreInfo(dev.entity);
-        else this._hass && this._hass.callService(dev.type, 'toggle', { entity_id: dev.entity });
+        if (dev.type === 'cover' || dev.type === 'mower' || dev.type === 'ac') {
+          this._openMoreInfo(dev.entity); // Mäher/Klima: Steuern bewusst nur im Dialog
+        } else if (dev.type === 'sprinkler') {
+          this._toggleSprinkler(dev.entity);
+        } else {
+          this._hass && this._hass.callService(dev.type, 'toggle', { entity_id: dev.entity });
+        }
       });
       g.addEventListener('click', (ev) => ev.stopPropagation()); // don't trigger the room below
       svg.appendChild(g);
@@ -688,7 +728,7 @@ class FloorplanTempCard extends HTMLElement {
 
   _updateAll() {
     if (!this._hass || !this._config) return;
-    for (const { dev, g, fill, setRing, glow } of this._devRefs || []) {
+    for (const { dev, g, fill, setRing, glow, flow } of this._devRefs || []) {
       const st = this._hass.states[dev.entity];
       const s = st ? st.state : 'unavailable';
       g.classList.toggle('unavail', s === 'unavailable' || s === 'unknown');
@@ -697,7 +737,15 @@ class FloorplanTempCard extends HTMLElement {
           ? Math.round(st.attributes.brightness / 2.55) : 0);
       }
       if (glow) glow.style.opacity = s === 'on' ? '1' : '0';
-      if (dev.type === 'cover') {
+      if (dev.type === 'ac') {
+        const on = !['off', 'unavailable', 'unknown'].includes(s);
+        g.classList.toggle('cooling', on);
+        if (flow) flow.style.opacity = on ? '1' : '0';
+      } else if (dev.type === 'mower') {
+        g.classList.toggle('active', ['mowing', 'cleaning', 'edgecut', 'returning'].includes(s));
+      } else if (dev.type === 'sprinkler') {
+        g.classList.toggle('watering', s === 'on' || s === 'open');
+      } else if (dev.type === 'cover') {
         g.classList.toggle('closed', s === 'closed');
         g.classList.toggle('moving', s === 'opening' || s === 'closing');
         if (fill) {
@@ -790,6 +838,18 @@ class FloorplanTempCard extends HTMLElement {
       for (const ent of entities) this._deltas.set(ent, null);
     }
     this._updateAll();
+  }
+
+  _toggleSprinkler(entity) {
+    if (!this._hass) return;
+    const st = this._hass.states[entity];
+    const domain = entity.split('.')[0];
+    if (domain === 'valve') {
+      const svc = st && (st.state === 'open' || st.state === 'opening') ? 'close_valve' : 'open_valve';
+      this._hass.callService('valve', svc, { entity_id: entity });
+    } else {
+      this._hass.callService(domain, 'toggle', { entity_id: entity });
+    }
   }
 
   _callDim(entity, pct) {

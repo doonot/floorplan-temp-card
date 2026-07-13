@@ -66,7 +66,7 @@
 </head>
 <body>
 <header>
-  <h1>🏠 Grundriss-Editor <small style="font-size:11px;font-weight:400;opacity:.55">v0.7.0</small></h1>
+  <h1>🏠 Grundriss-Editor <small style="font-size:11px;font-weight:400;opacity:.55">v0.10.0</small></h1>
   <div class="tabs" id="tabs"></div>
   <div class="tools">
     <button class="tool on" data-tool="select" title="Auswählen/Verschieben (V)">✥ Auswahl</button>
@@ -75,6 +75,9 @@
     <button class="tool" data-tool="light" title="Licht platzieren (L)">💡 Licht</button>
     <button class="tool" data-tool="cover" title="Store/Markise platzieren (S)">▤ Store</button>
     <button class="tool" data-tool="switch" title="Steckdose platzieren">🔌 Dose</button>
+    <button class="tool" data-tool="mower" title="Mähroboter platzieren">🤖 Mäher</button>
+    <button class="tool" data-tool="sprinkler" title="Bewässerung platzieren">💦 Wasser</button>
+    <button class="tool" data-tool="ac" title="Klimaanlage platzieren">❄️ Klima</button>
   </div>
   <div class="sp"></div>
   <button class="act" id="bgfileBtn" title="Grundriss-Plan (Foto/Scan) als Zeichenvorlage hinterlegen — bleibt lokal">🖼 Plan-Bild laden…</button>
@@ -111,6 +114,8 @@
       <div class="field"><label>Entity (light.* / cover.* / switch.*)</label>
         <input type="text" id="dEntity" placeholder="light.licht_eg_entree_spots"></div>
       <div class="field"><label>Name (Tooltip, optional)</label><input type="text" id="dName"></div>
+      <div class="field" id="dDirRow" hidden><label>Luftstrom-Richtung (° · 0=→ 90=↓ 180=← 270=↑)</label>
+        <input type="number" id="dDirection" step="15" min="0" max="359"></div>
       <div class="hint">Verschieben: ziehen · Löschen: ⌫</div>
       <button class="act" id="dDelete" style="color:#c22">Gerät löschen</button>
     </div>
@@ -172,6 +177,9 @@ const DEVICE_ICONS = {
   light: 'M12,2A7,7 0 0,0 5,9C5,11.38 6.19,13.47 8,14.74V17A1,1 0 0,0 9,18H15A1,1 0 0,0 16,17V14.74C17.81,13.47 19,11.38 19,9A7,7 0 0,0 12,2M9,21A1,1 0 0,0 10,22H14A1,1 0 0,0 15,21V20H9V21Z',
   cover: 'M3,4H21V8H19V20H17V8H7V20H5V8H3V4M8,9H16V11H8V9M8,12H16V14H8V12M8,15H16V17H8V15M8,18H16V20H8V18Z',
   switch: 'M16,7V3H14V7H10V3H8V7C8,7 7,8 7,9V14.5L10.5,18V21H13.5V18L17,14.5V9C17,8 16,7 16,7Z',
+  mower: 'M1 14V5H13C18.5 5 23 9.5 23 15V17H20.83C20.42 18.17 19.31 19 18 19C16.69 19 15.58 18.17 15.17 17H10C9.09 18.21 7.64 19 6 19C3.24 19 1 16.76 1 14M6 11C4.34 11 3 12.34 3 14C3 15.66 4.34 17 6 17C7.66 17 9 15.66 9 14C9 12.34 7.66 11 6 11M15 10V12H20.25C19.92 11.27 19.5 10.6 19 10H15Z',
+  ac: 'M6.59,0.66C8.93,-1.15 11.47,1.06 12.04,4.5C12.47,4.5 12.89,4.62 13.27,4.84C13.79,4.24 14.25,3.42 14.07,2.5C13.65,0.35 16.06,-1.39 18.35,1.58C20.16,3.92 17.95,6.46 14.5,7.03C14.5,7.46 14.39,7.89 14.16,8.27C14.76,8.78 15.58,9.24 16.5,9.06C18.63,8.64 20.38,11.04 17.41,13.34C15.07,15.15 12.53,12.94 11.96,9.5C11.53,9.5 11.11,9.37 10.74,9.15C10.22,9.75 9.75,10.58 9.93,11.5C10.35,13.64 7.94,15.39 5.65,12.42C3.83,10.07 6.05,7.53 9.5,6.97C9.5,6.54 9.63,6.12 9.85,5.74C9.25,5.23 8.43,4.76 7.5,4.94C5.37,5.36 3.62,2.96 6.59,0.66M5,16H7A2,2 0 0,1 9,18V24H7V22H5V24H3V18A2,2 0 0,1 5,16M5,18V20H7V18H5M12.93,16H15L12.07,24H10L12.93,16M18,16H21V18H18V22H21V24H18A2,2 0 0,1 16,22V18A2,2 0 0,1 18,16Z',
+  sprinkler: 'M10 10H14V22H10V10M7 9H9V7H7V9M4 8H6V6H4V8M4 11H6V9H4V11M1 13H3V11H1V13M1 7H3V5H1V7M1 10H3V8H1V10M18 11H20V9H18V11M21 10H23V8H21V10M21 5V7H23V5H21M21 13H23V11H21V13M15 9H17V7H15V9M18 8H20V6H18V8M10 7H10.33L11 9H13L13.67 7H14V6H10V7Z',
 };
 const devices = () => (floor().devices = floor().devices || []);
 const devById = (id) => devices().find((d) => d.id === id);
@@ -410,9 +418,11 @@ function renderSidebar() {
   const dv = devById(devSel);
   dprops.hidden = !dv;
   if (dv) {
-    document.getElementById('dType').textContent = { light: '· Licht', cover: '· Store', switch: '· Steckdose' }[dv.type] || '';
+    document.getElementById('dType').textContent = { light: '· Licht', cover: '· Store', switch: '· Steckdose', mower: '· Mähroboter', sprinkler: '· Bewässerung', ac: '· Klimaanlage' }[dv.type] || '';
     document.getElementById('dEntity').value = dv.entity || '';
     document.getElementById('dName').value = dv.name || '';
+    document.getElementById('dDirRow').hidden = dv.type !== 'ac';
+    document.getElementById('dDirection').value = dv.direction || 0;
   }
   const multi = document.getElementById('multi');
   multi.hidden = selIds.length < 2;
@@ -461,7 +471,7 @@ svg.addEventListener('pointerdown', (ev) => {
     svg.setPointerCapture(ev.pointerId);
     return;
   }
-  if (tool === 'light' || tool === 'switch') {
+  if (tool === 'light' || tool === 'switch' || tool === 'mower' || tool === 'sprinkler' || tool === 'ac') {
     let n = devices().length + 1;
     let id = 'dev-' + n;
     while (devById(id)) id = 'dev-' + ++n;
@@ -699,6 +709,12 @@ for (const [id, key] of [['dEntity', 'entity'], ['dName', 'name']]) {
     persist();
   });
 }
+document.getElementById('dDirection').addEventListener('input', (ev) => {
+  const dv = devById(devSel); if (!dv) return;
+  const v = parseInt(ev.target.value, 10);
+  if (Number.isFinite(v) && v) dv.direction = v; else delete dv.direction;
+  persist();
+});
 
 // ---------- toolbar / panel wiring ----------
 function setTool(t) {
@@ -798,6 +814,7 @@ function deviceYaml(d) {
   const parts = [`type: ${d.type}`, `entity: ${d.entity || 'TODO'}`];
   if (d.from) parts.push(`from: [${d.from.map(Math.round).join(', ')}]`, `to: [${d.to.map(Math.round).join(', ')}]`);
   else parts.push(`at: [${d.at.map(Math.round).join(', ')}]`);
+  if (d.direction) parts.push(`direction: ${d.direction}`);
   if (d.name) parts.push(`name: ${yq(d.name)}`);
   return `  - {${parts.join(', ')}}`;
 }
