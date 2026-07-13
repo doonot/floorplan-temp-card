@@ -5,7 +5,7 @@
  * No dependencies, no build step. MIT.
  */
 
-const VERSION = '0.16.2';
+const VERSION = '0.17.0';
 
 // Sichtbarkeits-Ebenen: global über alle Karten synchron (localStorage +
 // Custom-Event), umgeschaltet über die Legende unter dem Kartenkopf.
@@ -507,7 +507,12 @@ class FloorplanTempCard extends HTMLElement {
       .ac-flow path {
         fill: none; stroke: #5db8ff; stroke-width: 3.2; stroke-linecap: round;
         stroke-dasharray: 10 13; opacity: 0.75;
-        animation: fp-acflow 1.1s linear infinite;
+        animation: fp-acflow var(--fp-flow-dur, 1.1s) linear infinite;
+      }
+      /* WindFree: kein gerichteter Wind — feiner, fast stehender Schleier */
+      .ac-flow.windfree path {
+        stroke-dasharray: 2 15; opacity: 0.3; stroke-width: 2.4;
+        animation-duration: calc(var(--fp-flow-dur, 1.1s) * 4);
       }
       .ac-flow { pointer-events: none; transition: opacity 0.5s ease; }
       /* camera: view cone + inline video overlay */
@@ -518,10 +523,6 @@ class FloorplanTempCard extends HTMLElement {
       /* WLAN-AP: cyan coverage + expanding ripple rings */
       .wifi-cover { pointer-events: none; }
       .wifi-cover .wifi-fill { fill: url(#fp-wifi); }
-      .wifi-cover .wifi-edge {
-        fill: none; stroke: #35c3d0; stroke-width: 1.5;
-        stroke-dasharray: 5 6; opacity: 0.4;
-      }
       .wifi-cover .wifi-ring {
         fill: none; stroke: #35c3d0; stroke-width: 2; opacity: 0;
         transform-box: fill-box; transform-origin: center;
@@ -824,8 +825,6 @@ class FloorplanTempCard extends HTMLElement {
         const range = dev.range || 110;
         wifiCover = svgEl('g', { class: 'wifi-cover', 'data-layer': 'wifi' });
         wifiCover.appendChild(svgEl('circle', { cx: dev.at[0], cy: dev.at[1], r: range, class: 'wifi-fill' }));
-        // sichtbare Radius-Grenze (konfigurierter range)
-        wifiCover.appendChild(svgEl('circle', { cx: dev.at[0], cy: dev.at[1], r: range, class: 'wifi-edge' }));
         for (let i = 0; i < 3; i++) {
           const rp = svgEl('circle', { cx: dev.at[0], cy: dev.at[1], r: range, class: 'wifi-ring' });
           rp.style.animationDelay = `${i * 1.2}s`;
@@ -852,18 +851,25 @@ class FloorplanTempCard extends HTMLElement {
           'data-layer': 'camera',
         }));
       }
+      let acRotG = null, acAmpG = null;
       if (dev.type === 'ac') {
-        // airflow streams pointing in `direction` (degrees, 0 = right/east)
+        // airflow streams pointing in `direction` (degrees, 0 = right/east).
+        // Verschachtelt für dynamische Modi: rotG schwenkt (swing horizontal),
+        // ampG pulsiert (swing vertical) — beides via SMIL um den AC-Punkt (0,0).
         flow = svgEl('g', {
           class: 'ac-flow',
           'data-layer': 'ac',
-          transform: `translate(${dev.at[0]}, ${dev.at[1]}) rotate(${dev.direction || 0})`,
+          transform: `translate(${dev.at[0]}, ${dev.at[1]})`,
         });
+        acRotG = svgEl('g', { transform: `rotate(${dev.direction || 0})` });
+        acAmpG = svgEl('g');
         for (const sd of [
           'M24,-14 q18,-8 36,0 t36,0 t36,0',
           'M26,0 q18,-8 36,0 t36,0 t36,0 t36,0',
           'M24,14 q18,-8 36,0 t36,0 t36,0',
-        ]) flow.appendChild(svgEl('path', { d: sd }));
+        ]) acAmpG.appendChild(svgEl('path', { d: sd }));
+        acRotG.appendChild(acAmpG);
+        flow.appendChild(acRotG);
         flow.style.opacity = '0';
         glowLayer.appendChild(flow);
       }
@@ -910,7 +916,7 @@ class FloorplanTempCard extends HTMLElement {
         ring.style.display = pct > 0 ? '' : 'none';
         ring.setAttribute('stroke-dasharray', `${(ringC * pct) / 100} ${ringC}`);
       };
-      this._devRefs.push({ dev, g, setRing, glow, flow, wifiCover });
+      this._devRefs.push({ dev, g, setRing, glow, flow, wifiCover, acRotG, acAmpG });
       let pressTimer = null, longPressed = false, moved = false, dimming = false;
       let startY = 0, startPct = 0, lastSent = 0;
       g.addEventListener('pointerdown', (ev) => {
@@ -1010,7 +1016,8 @@ class FloorplanTempCard extends HTMLElement {
 
   _updateAll() {
     if (!this._hass || !this._config) return;
-    for (const { dev, g, fill, setRing, glow, flow, wifiCover } of this._devRefs || []) {
+    for (const ref of this._devRefs || []) {
+      const { dev, g, fill, setRing, glow, flow, wifiCover } = ref;
       const st = this._hass.states[dev.entity];
       const s = st ? st.state : 'unavailable';
       g.classList.toggle('unavail', !!dev.entity && (s === 'unavailable' || s === 'unknown'));
@@ -1029,7 +1036,39 @@ class FloorplanTempCard extends HTMLElement {
       if (dev.type === 'ac') {
         const on = !['off', 'unavailable', 'unknown'].includes(s);
         g.classList.toggle('cooling', on);
-        if (flow) flow.style.opacity = on ? '1' : '0';
+        if (flow) {
+          flow.style.opacity = on ? '1' : '0';
+          const a = (st && st.attributes) || {};
+          // WindFree → kein gerichteter Wind, nur feiner Schleier
+          const preset = String(a.preset_mode || '').toLowerCase();
+          flow.classList.toggle('windfree', preset.includes('wind_free') || preset.includes('windfree'));
+          // Lüfterstufe → Strömungsgeschwindigkeit
+          const durMap = { turbo: '0.55s', high: '0.75s', medium: '1.1s', auto: '1.1s', low: '1.7s', quiet: '1.9s' };
+          flow.style.setProperty('--fp-flow-dur', durMap[a.fan_mode] || '1.1s');
+          // Swing → Schwenk (horizontal) / Amplituden-Puls (vertical) via SMIL
+          const swing = a.swing_mode || 'off';
+          const modeKey = `${swing}|${dev.direction || 0}`;
+          if (ref._acModeKey !== modeKey && ref.acRotG) {
+            ref._acModeKey = modeKey;
+            const dir = dev.direction || 0;
+            ref.acRotG.querySelectorAll('animateTransform').forEach((n) => n.remove());
+            if (swing === 'horizontal' || swing === 'both') {
+              ref.acRotG.appendChild(svgEl('animateTransform', {
+                attributeName: 'transform', type: 'rotate',
+                values: `${dir - 26} 0 0;${dir + 26} 0 0;${dir - 26} 0 0`,
+                dur: '4.5s', repeatCount: 'indefinite',
+              }));
+            }
+            ref.acAmpG.querySelectorAll('animateTransform').forEach((n) => n.remove());
+            if (swing === 'vertical' || swing === 'both') {
+              ref.acAmpG.appendChild(svgEl('animateTransform', {
+                attributeName: 'transform', type: 'scale',
+                values: '1 0.78;1 1.22;1 0.78',
+                dur: '2.6s', repeatCount: 'indefinite',
+              }));
+            }
+          }
+        }
       } else if (dev.type === 'mower') {
         g.classList.toggle('active', ['mowing', 'cleaning', 'edgecut', 'returning'].includes(s));
       } else if (dev.type === 'sprinkler') {
